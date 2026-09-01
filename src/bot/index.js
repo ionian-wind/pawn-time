@@ -195,6 +195,18 @@ async function present(bot, flow, result) {
         pollMessages.set(result.poll.id, { chatId: String(target), messageId: sent.message_id });
       }
     }
+    // the draft form is transient: once the poll is live the interactive
+    // message is no longer needed, so remove it from the chat.
+    if (result.formChatId != null && result.formMessageId != null) {
+      try {
+        await bot.api.deleteMessage({
+          chat_id: Number(result.formChatId),
+          message_id: result.formMessageId,
+        });
+      } catch {
+        // the form may already be gone (deleted manually by the user)
+      }
+    }
     return;
   }
 

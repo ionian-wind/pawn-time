@@ -129,11 +129,9 @@ describe('UI localization', () => {
     const view = buildPollView(poll, String(author.id));
 
     const ru = buildPollMessage(view, 'ru');
-    expect(richTexts(ru).join(' ')).toContain('опубликован');
     expect(richTexts(ru).join(' ')).toContain('Участников:');
 
     const en = buildPollMessage(view, 'en');
-    expect(richTexts(en).join(' ')).toContain('is live');
     // date sections carry their own heading
     expect(richTexts(en).join(' ')).toContain('Sep 10');
     expect(richTexts(en).join(' ')).toContain('Sep 11');

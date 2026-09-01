@@ -160,6 +160,46 @@ describe('Bot /new flow', () => {
     expect(done.published).toBe(true);
     expect(done.poll.title).toBe('Team sync');
     expect(done.poll.options).toHaveLength(2);
+    expect(done.formChatId).toBe('333');
+    expect(done.formMessageId).toBeNull();
+  });
+
+  it('carries the tracked draft-form message id into the publish result', () => {
+    const flow = new FlowManager();
+    const alice = fromUser(777);
+    const start = flow.start(String(alice.id), null, alice, 'Delete form');
+    flow.setMessageId(start.sessionKey, 42);
+
+    const nextMonth = flow.onCallback('777', 777, 'month:+1');
+    const days = { content: nextMonth.content };
+    const dates = dayButtons(days.content)
+      .slice(0, 2)
+      .map((b) => decodeCallback(b.callback_data).date);
+
+    for (const date of dates) {
+      const btn = dayButtons(days.content).find(
+        (b) => decodeCallback(b.callback_data).date === date
+      );
+      days.content = flow.onCallback('777', 777, btn.callback_data).content;
+    }
+
+    let times = flow.onCallback('777', 777, okFor(days.content, 'days'));
+    const slot = buttonWith(times.content, (d) => d?.type === 'slot').callback_data;
+    const afterSlot = flow.onCallback('777', 777, slot);
+
+    const nextNav = buttonWith(afterSlot.content, (d) => d?.type === 'nav' && d.dir === 'next');
+    const day2 = flow.onCallback('777', 777, nextNav.callback_data);
+    const day2Selected = flow.onCallback(
+      '777',
+      777,
+      buttonWith(day2.content, (d) => d?.type === 'slot').callback_data
+    );
+
+    const done = flow.onCallback('777', 777, okFor(day2Selected.content, 'times'));
+    expect(done.type).toBe('done');
+    expect(done.formChatId).toBe('777');
+    expect(done.formMessageId).toBe(42);
+    expect(flow.getMessage('777:777')).toBeNull();
   });
 
   it('returns to day selection from the times screen via back', () => {

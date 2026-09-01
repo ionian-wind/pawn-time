@@ -25,6 +25,8 @@
  * @property {import('../domains/poll/poll.entity.js').PollWithStats | null} poll
  * @property {string} sessionKey
  * @property {string | null} publishChatId - chat to send the finished poll to
+ * @property {string | null} formChatId - chat hosting the draft form message
+ * @property {number | null} formMessageId - the draft form message to remove on publish
  */
 
 export {};

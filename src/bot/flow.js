@@ -249,12 +249,16 @@ export class FlowManager {
     const poll = DraftService.publishDraft(session.draftId, session.authorId);
     if (!poll) return this.#render(session, this.#timesContent(draft, session));
     const view = buildPollView(poll, String(session.fromId));
+    const formChatId = session.chatId;
+    const formMessageId = session.messageId;
     this.sessions.delete(this.#key(session.chatId, session.fromId));
     return {
       type: 'done',
       published: true,
       poll,
       publishChatId: session.publishChatId ?? session.chatId,
+      formChatId,
+      formMessageId,
       content: buildPollMessage(view, session.locale),
     };
   }

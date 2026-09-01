@@ -155,6 +155,19 @@ describe('poll voting via the bot', () => {
     expect(stageButtonCount(log, 'sendRichMessage')).toBe(3);
   });
 
+  it('removes the draft form message once the poll is published', async () => {
+    const log = [];
+    const bot = createBot('123:fake', { fetch: makeFetch(log), maxRetries: 0 });
+
+    await publishPoll(bot);
+
+    const deletes = log.filter((r) => r.method === 'deleteMessage');
+    expect(deletes).toHaveLength(1);
+    // the draft form lives in the author's DM and carries its tracked message id
+    expect(deletes[0].body).toMatchObject({ chat_id: String(111) });
+    expect(Number(deletes[0].body.message_id)).toBeGreaterThan(1000);
+  });
+
   it('stages a vote choice for a whole row and applies it only on confirm', async () => {
     const log = [];
     const bot = createBot('123:fake', { fetch: makeFetch(log), maxRetries: 0 });
