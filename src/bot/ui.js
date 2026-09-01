@@ -247,9 +247,7 @@ export function buildPollMessage(view, locale = 'en', staged = null) {
   const { poll, rows } = view;
   const open = VoteService.canVote(poll);
 
-  const builder = new RichMessageBuilder().paragraph(
-    new RichTextBuilder().bold(poll.title).plain(` ${t('isLive')}`)
-  );
+  const builder = new RichMessageBuilder().paragraph(new RichTextBuilder().bold(poll.title));
 
   if (staged) builder.paragraph(t('stagedHint'));
 
