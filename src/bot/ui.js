@@ -358,10 +358,10 @@ export function buildDraftsMessage(drafts, locale = 'en') {
     }
 
     builder.buttons([
-      richMessageButton(`${t('continue')} \u25B6`, {
+      richMessageButton(`${t('continue')}`, {
         callback_data: editDraftCallback(draft.id),
       }),
-      richMessageButton(`${t('deleteDraft')} \u2715`, {
+      richMessageButton(`${t('deleteDraft')}`, {
         callback_data: deleteDraftCallback(draft.id),
       }),
     ]);
