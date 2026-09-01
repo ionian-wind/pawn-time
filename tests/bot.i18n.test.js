@@ -147,12 +147,20 @@ describe('UI localization', () => {
     expect(richButtons(en).some((b) => String(b.callback_data).startsWith('vstart:'))).toBe(false);
 
     const staged = buildPollMessage(view, 'en', new Map());
-    expect(richButtons(staged).some((b) => String(b.callback_data) === `vok:${poll.id}`)).toBe(
-      true
-    );
-    expect(richButtons(staged).some((b) => String(b.callback_data) === `vcancel:${poll.id}`)).toBe(
-      true
-    );
+    const confirm = richButtons(staged).find((b) => b.text === 'Confirm \u2713');
+    const cancel = richButtons(staged).find((b) => b.text === 'Cancel \u2717');
+    // awaiting a vote: confirm/cancel are visible but disabled while no
+    // response is staged for any option
+    expect(confirm).toBeTruthy();
+    expect(cancel).toBeTruthy();
+    expect(confirm.callback_data).toBeUndefined();
+    expect(cancel.callback_data).toBeUndefined();
+
+    const withChoice = buildPollMessage(view, 'en', new Map([['x', 'yes']]));
+    const activeConfirm = richButtons(withChoice).find((b) => b.text === 'Confirm \u2713');
+    const activeCancel = richButtons(withChoice).find((b) => b.text === 'Cancel \u2717');
+    expect(activeConfirm.callback_data).toBe(`vok:${poll.id}`);
+    expect(activeCancel.callback_data).toBe(`vcancel:${poll.id}`);
   });
 
   it('shows totals and hides the vote buttons once the viewer voted the row', () => {

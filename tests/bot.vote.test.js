@@ -1,5 +1,5 @@
 import { createBot } from '../src/bot/index.js';
-import { richTexts } from '../src/bot/ui.js';
+import { richTexts, richButtons } from '../src/bot/ui.js';
 import { VoteService } from '../src/index.js';
 
 const okBody = (result) => JSON.stringify({ ok: true, result });
@@ -255,6 +255,16 @@ describe('poll voting via the bot', () => {
 
     await bot.handleUpdate(callbackUpdate(555, `stage:${pollId}:0:y`, 111));
     await bot.handleUpdate(callbackUpdate(555, `stage:${pollId}:0:y`, 111));
+
+    // staged set is now empty: confirm/cancel stay visible but disabled
+    const panel = [...log].reverse().find((r) => r.method === 'editMessageText');
+    const buttons = panel ? richButtons(panel.body) : [];
+    const confirm = buttons.find((b) => b.text === 'Confirm \u2713');
+    const cancel = buttons.find((b) => b.text === 'Cancel \u2717');
+    expect(confirm).toBeTruthy();
+    expect(cancel).toBeTruthy();
+    expect(confirm.callback_data).toBeUndefined();
+    expect(cancel.callback_data).toBeUndefined();
 
     // staged set is now empty, so confirm applies nothing
     await bot.handleUpdate(callbackUpdate(555, `vok:${pollId}`, 111));

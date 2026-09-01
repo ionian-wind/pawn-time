@@ -294,11 +294,16 @@ export function buildPollMessage(view, locale = 'en', staged = null) {
   }
 
   if (staged) {
+    // awaiting the viewer's vote: Confirm / Cancel are always visible, but stay
+    // disabled until at least one response has been staged for an option.
+    const noAnswers = staged.size === 0;
     builder.buttons([
       richMessageButton(`${t('confirm')} \u2713`, {
-        callback_data: voteConfirmCallback(poll.id),
+        ...(noAnswers ? { disabled: {} } : { callback_data: voteConfirmCallback(poll.id) }),
       }),
-      richMessageButton(`${t('cancel')} \u2717`, { callback_data: voteCancelCallback(poll.id) }),
+      richMessageButton(`${t('cancel')} \u2717`, {
+        ...(noAnswers ? { disabled: {} } : { callback_data: voteCancelCallback(poll.id) }),
+      }),
     ]);
   }
 
