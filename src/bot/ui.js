@@ -44,7 +44,8 @@ function startOfTodayIso() {
 /**
  * Builds the day-selection screen as a RICH MESSAGE styled like a calendar: a
  * weekday header row, the month's day grid (7 columns), and arrow buttons below
- * to switch between months, plus (OK) / (Reset).
+ * to switch between months, plus (OK) / (Reset) — disabled until a day is
+ * selected.
  * @param {import('../domains/draft/draft.entity.js').Draft} draft
  * @param {{ year: number, monthIndex: number }} calendar - visible month
  * @param {string} [locale]
@@ -87,8 +88,12 @@ export function buildDaysMessage(draft, calendar, locale = 'en', maxDays = confi
   }
 
   builder.buttons([
-    richMessageButton(`${t('ok')} \u2713`, { callback_data: okCallback(STEP.DAYS) }),
-    richMessageButton(t('reset'), { callback_data: resetCallback(STEP.DAYS) }),
+    richMessageButton(`${t('ok')} \u2713`, {
+      ...(selected.size === 0 ? { disabled: {} } : { callback_data: okCallback(STEP.DAYS) }),
+    }),
+    richMessageButton(t('reset'), {
+      ...(selected.size === 0 ? { disabled: {} } : { callback_data: resetCallback(STEP.DAYS) }),
+    }),
     richMessageButton(`${t('remove')} \u2715`, { callback_data: removeDraftCallback() }),
   ]);
 
@@ -146,7 +151,7 @@ function flattenRichText(text) {
  * Builds the time-selection screen for a single (current) day as a RICH
  * MESSAGE: a 30-minute interval grid (3 columns), arrow buttons to navigate
  * between the selected days, a (Back) button returning to day selection, and
- * (OK) / (Reset) below.
+ * (OK) / (Reset) below — both disabled until a slot is chosen.
  * @param {import('../domains/draft/draft.entity.js').Draft} draft
  * @param {number} dayIndex - index into draft.selectedDates
  * @param {Array<{ start: string, end: string }>} timeSlots
@@ -208,8 +213,12 @@ export function buildTimesMessage(
 
   builder.buttons([
     richMessageButton(`${t('back')} \u2190`, { callback_data: backCallback() }),
-    richMessageButton(`${t('ok')} \u2713`, { callback_data: okCallback(STEP.TIMES) }),
-    richMessageButton(t('reset'), { callback_data: resetCallback(STEP.TIMES) }),
+    richMessageButton(`${t('ok')} \u2713`, {
+      ...(chosen.size === 0 ? { disabled: {} } : { callback_data: okCallback(STEP.TIMES) }),
+    }),
+    richMessageButton(t('reset'), {
+      ...(chosen.size === 0 ? { disabled: {} } : { callback_data: resetCallback(STEP.TIMES) }),
+    }),
     richMessageButton(`${t('remove')} \u2715`, { callback_data: removeDraftCallback() }),
   ]);
 

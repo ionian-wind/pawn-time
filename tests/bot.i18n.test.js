@@ -187,3 +187,41 @@ describe('UI localization', () => {
     );
   });
 });
+
+describe('OK/Reset button enablement', () => {
+  it('disables OK/Reset on the days screen until a day is selected', () => {
+    const author = UserRepository.create({ name: 'A' });
+    const empty = draftWith(author);
+    const calendar = { year: 2099, monthIndex: 0 };
+
+    const before = buildDaysMessage(empty, calendar, 'en');
+    const beforeData = richButtons(before).map((b) => String(b.callback_data));
+    expect(beforeData).toEqual(expect.not.arrayContaining(['ok:days', 'reset:days']));
+
+    const draft = DraftService.addDate(empty.id, author.id, '2099-01-05');
+    const after = buildDaysMessage(draft, calendar, 'en');
+    const afterData = richButtons(after).map((b) => String(b.callback_data));
+    expect(afterData).toEqual(expect.arrayContaining(['ok:days', 'reset:days']));
+  });
+
+  it('disables OK/Reset on the times screen until a slot is chosen', () => {
+    const author = UserRepository.create({ name: 'A' });
+    const draft = draftWith(author);
+    DraftService.addDate(draft.id, author.id, '2026-09-01');
+    const current = DraftService.getDraft(draft.id, author.id);
+
+    const before = buildTimesMessage(current, 0, generateTimeSlots(), 'en');
+    const beforeData = richButtons(before).map((b) => String(b.callback_data));
+    expect(beforeData).toEqual(expect.not.arrayContaining(['ok:times', 'reset:times']));
+
+    DraftService.toggleTimeSlot(current.id, author.id, {
+      date: '2026-09-01',
+      start: '09:00',
+      end: '09:30',
+    });
+    const chosen = DraftService.getDraft(current.id, author.id);
+    const after = buildTimesMessage(chosen, 0, generateTimeSlots(), 'en');
+    const afterData = richButtons(after).map((b) => String(b.callback_data));
+    expect(afterData).toEqual(expect.arrayContaining(['ok:times', 'reset:times']));
+  });
+});

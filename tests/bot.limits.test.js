@@ -165,9 +165,9 @@ describe('scheduling limits', () => {
     const days0 = flow.onCallback(String(userId), userId, 'month:+1').content;
 
     const day = dayButtons(days0)[0];
-    flow.onCallback(String(userId), userId, day.callback_data);
+    const selected = flow.onCallback(String(userId), userId, day.callback_data);
 
-    let times = flow.onCallback(String(userId), userId, okFor(days0, 'days')).content;
+    let times = flow.onCallback(String(userId), userId, okFor(selected.content, 'days')).content;
     const presses = slotButtons(times)
       .slice(0, 6)
       .map((b) => b.callback_data);

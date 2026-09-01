@@ -148,10 +148,14 @@ describe('Bot /new flow', () => {
     const day2 = flow.onCallback('333', 333, nextNav.callback_data);
     expect(timesCurrentDay(day2.content)).toBe(formatDisplayDate(dates[1]));
 
-    flow.onCallback('333', 333, buttonWith(day2.content, (d) => d?.type === 'slot').callback_data);
+    const day2Selected = flow.onCallback(
+      '333',
+      333,
+      buttonWith(day2.content, (d) => d?.type === 'slot').callback_data
+    );
 
     // OK on the last day publishes
-    const done = flow.onCallback('333', 333, okFor(day2.content, 'times'));
+    const done = flow.onCallback('333', 333, okFor(day2Selected.content, 'times'));
     expect(done.type).toBe('done');
     expect(done.published).toBe(true);
     expect(done.poll.title).toBe('Team sync');
@@ -165,8 +169,8 @@ describe('Bot /new flow', () => {
     const dayCell = dayButtons(start.content)[0];
     const chosen = decodeCallback(dayCell.callback_data).date;
 
-    flow.onCallback('666', 666, dayCell.callback_data);
-    const times = flow.onCallback('666', 666, okFor(start.content, 'days'));
+    const selected = flow.onCallback('666', 666, dayCell.callback_data);
+    const times = flow.onCallback('666', 666, okFor(selected.content, 'days'));
     expect(times.type).toBe('render');
     expect(timesCurrentDay(times.content)).toBe(formatDisplayDate(chosen));
 
@@ -200,8 +204,8 @@ describe('Bot /new flow', () => {
     const alice = fromUser(999);
     const started = flow.start(String(alice.id), null, alice, 'Times remove');
     const dayCell = dayButtons(started.content)[0];
-    flow.onCallback('999', 999, dayCell.callback_data);
-    const times = flow.onCallback('999', 999, okFor(started.content, 'days'));
+    const selected = flow.onCallback('999', 999, dayCell.callback_data);
+    const times = flow.onCallback('999', 999, okFor(selected.content, 'days'));
     expect(timesCurrentDay(times.content)).toBeTruthy();
 
     const removed = flow.onCallback('999', 999, 'remove:');
@@ -213,9 +217,10 @@ describe('Bot /new flow', () => {
   it('cannot proceed to times with no days selected', () => {
     const flow = new FlowManager();
     const alice = fromUser(444);
-    const days = { content: flow.start(String(alice.id), null, alice, 'Empty').content };
+    flow.start(String(alice.id), null, alice, 'Empty');
 
-    const ok = flow.onCallback('444', 444, okFor(days.content, 'days'));
+    // the OK button is disabled on an empty days screen; the flow still guards
+    const ok = flow.onCallback('444', 444, 'ok:days');
     expect(ok.type).toBe('render');
     expect(ok.poll).toBeNull();
     expect(ok.published).toBe(false);
