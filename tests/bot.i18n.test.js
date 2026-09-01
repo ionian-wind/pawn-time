@@ -136,8 +136,8 @@ describe('UI localization', () => {
     expect(richTexts(en).join(' ')).toContain('Sep 10');
     expect(richTexts(en).join(' ')).toContain('Sep 11');
     // consecutive 30-minute slots are merged into one range
-    expect(richButtons(en).some((b) => b.text.includes('09:00\u201310:00'))).toBe(true);
-    expect(richButtons(en).some((b) => b.text.includes('14:00\u201314:30'))).toBe(true);
+    expect(richTexts(en).join(' ')).toContain('09:00\u201310:00');
+    expect(richTexts(en).join(' ')).toContain('14:00\u201314:30');
     // per-row vote, maybe and reject buttons, no global Vote button
     const stageButtons = richButtons(en).filter((b) =>
       String(b.callback_data).startsWith('stage:')
@@ -178,8 +178,7 @@ describe('UI localization', () => {
     }
 
     const after = buildPollMessage(buildPollView(poll, String(author.id)), 'en');
-    const texts = richButtons(after).map((b) => b.text);
-    expect(texts.some((t) => t.includes('\u27131'))).toBe(true);
+    expect(richTexts(after).join(' ')).toContain('\u27131');
     expect(richButtons(after).some((b) => String(b.callback_data).startsWith('stage:'))).toBe(
       false
     );

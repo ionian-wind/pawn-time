@@ -1,4 +1,5 @@
 import { createBot } from '../src/bot/index.js';
+import { richTexts } from '../src/bot/ui.js';
 import { VoteService } from '../src/index.js';
 
 const okBody = (result) => JSON.stringify({ ok: true, result });
@@ -127,6 +128,17 @@ function buttonTexts(log, method) {
  * @param log
  * @param method
  */
+function messageTexts(log, method) {
+  const entry = [...log].reverse().find((r) => r.method === method);
+  if (!entry) return [];
+  return richTexts(entry.body).join(' ');
+}
+
+/**
+ *
+ * @param log
+ * @param method
+ */
 function stageButtonCount(log, method) {
   const edit = [...log].reverse().find((r) => r.method === method);
   if (!edit) return 0;
@@ -147,9 +159,7 @@ describe('poll voting via the bot', () => {
     expect(pollId).toBeTruthy();
 
     // two adjacent slots on one date merge into a single range row
-    expect(buttonTexts(log, 'sendRichMessage').some((t) => t.includes('09:00\u201310:00'))).toBe(
-      true
-    );
+    expect(messageTexts(log, 'sendRichMessage')).toContain('09:00\u201310:00');
     // no separate global Vote button anymore; vote buttons are per row
     expect(buttonTexts(log, 'sendRichMessage')).not.toContain('Vote \u2714');
     expect(stageButtonCount(log, 'sendRichMessage')).toBe(3);
@@ -186,7 +196,7 @@ describe('poll voting via the bot', () => {
     // both slots of the row were voted, and the buttons disappear for the voter
     const after = VoteService.getParticipantVotes(pollId, '999');
     expect(after && Object.values(after)).toEqual(['yes', 'yes']);
-    expect(buttonTexts(log, 'editMessageText').some((t) => t.includes('\u27131'))).toBe(true);
+    expect(messageTexts(log, 'editMessageText')).toContain('\u27131');
     expect(stageButtonCount(log, 'editMessageText')).toBe(0);
   });
 
@@ -202,7 +212,7 @@ describe('poll voting via the bot', () => {
 
     const after = VoteService.getParticipantVotes(pollId, '666');
     expect(after && Object.values(after)).toEqual(['maybe', 'maybe']);
-    expect(buttonTexts(log, 'editMessageText').some((t) => t.includes('~1'))).toBe(true);
+    expect(messageTexts(log, 'editMessageText')).toContain('~1');
     expect(stageButtonCount(log, 'editMessageText')).toBe(0);
   });
 
@@ -218,7 +228,7 @@ describe('poll voting via the bot', () => {
 
     const after = VoteService.getParticipantVotes(pollId, '777');
     expect(after && Object.values(after)).toEqual(['no', 'no']);
-    expect(buttonTexts(log, 'editMessageText').some((t) => t.includes('\u27171'))).toBe(true);
+    expect(messageTexts(log, 'editMessageText')).toContain('\u27171');
     expect(stageButtonCount(log, 'editMessageText')).toBe(0);
   });
 
@@ -276,8 +286,8 @@ describe('poll voting via the bot', () => {
 
     // all rows are now totals-only: no stage buttons remain anywhere
     expect(stageButtonCount(log, 'editMessageText')).toBe(0);
-    const texts = buttonTexts(log, 'editMessageText');
-    expect(texts.some((t) => t.includes('09:00\u201309:30'))).toBe(true);
-    expect(texts.some((t) => t.includes('10:00\u201310:30'))).toBe(true);
+    const texts = messageTexts(log, 'editMessageText');
+    expect(texts).toContain('09:00\u201309:30');
+    expect(texts).toContain('10:00\u201310:30');
   });
 });

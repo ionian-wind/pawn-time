@@ -260,11 +260,12 @@ export function buildPollMessage(view, locale = 'en', staged = null) {
 
     const label = `${row.start}\u2013${row.end}`;
     const counts = `\u2713${row.counts.yes}  ~${row.counts.maybe}  \u2717${row.counts.no}`;
+    const result = new RichTextBuilder().bold(label).plain(`  ${counts}`);
 
     if (staged) {
       const choice = choiceFor(staged, row);
+      builder.paragraph(result);
       builder.buttons([
-        richMessageButton(`${label}  ${counts}`, { disabled: {} }),
         richMessageButton('\u2713', {
           callback_data: stageCallback(poll.id, row.index, 'yes'),
           ...(choice === 'yes' ? { style: 'primary' } : {}),
@@ -280,11 +281,11 @@ export function buildPollMessage(view, locale = 'en', staged = null) {
       ]);
     } else if (row.mine || view.voted || !open) {
       // already voted (this row or anywhere in the poll, or the poll is closed):
-      // totals only, all buttons disabled
-      builder.buttons([richMessageButton(`${label}  ${counts}`, { disabled: {} })]);
+      // totals only, no stage buttons
+      builder.paragraph(result);
     } else {
+      builder.paragraph(result);
       builder.buttons([
-        richMessageButton(`${label}  ${counts}`, { disabled: {} }),
         richMessageButton('\u2713', { callback_data: stageCallback(poll.id, row.index, 'yes') }),
         richMessageButton('~', { callback_data: stageCallback(poll.id, row.index, 'maybe') }),
         richMessageButton('\u2717', { callback_data: stageCallback(poll.id, row.index, 'no') }),
