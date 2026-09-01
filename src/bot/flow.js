@@ -28,13 +28,18 @@ export class FlowManager {
    * The interactive flow runs in the bot's DM with the user (`dmChatId`); the
    * finished poll is published to `publishChatId` (falling back to the DM when
    * null). `title` is required by the `/new <title>` command.
+   *
+   * When `opts.receiverUserId` is set the form is an ephemeral message in a
+   * group chat (the `dmChatId`), visible only to that user; the finished poll
+   * is still published publicly.
    * @param {string} dmChatId
    * @param {string | null} publishChatId
    * @param {import('node-telegram-bot-api').User} from
    * @param {string} title
+   * @param {{ receiverUserId?: number }} [opts]
    * @returns {{sessionKey: string, authorId: string, draftId: string, content: object}}
    */
-  start(dmChatId, publishChatId, from, title) {
+  start(dmChatId, publishChatId, from, title, opts = {}) {
     const user = UserRepository.findOrCreateBySession(
       { name: from.first_name || undefined },
       String(from.id)
@@ -60,6 +65,8 @@ export class FlowManager {
       step: STEP.DAYS,
       dayIndex: 0,
       messageId: null,
+      ephemeralMessageId: null,
+      receiverUserId: opts.receiverUserId ?? null,
       locale,
       calendar: currentCalendar(),
     };
@@ -82,9 +89,10 @@ export class FlowManager {
    * @param {string | null} [publishChatId]
    * @param {import('node-telegram-bot-api').User} from
    * @param {import('../domains/draft/draft.entity.js').Draft} draft
+   * @param {{ receiverUserId?: number, ephemeralMessageId?: number }} [opts]
    * @returns {import('./flow.entity.js').FlowResult | null}
    */
-  resume(chatId, publishChatId, from, draft) {
+  resume(chatId, publishChatId, from, draft, opts = {}) {
     const user = UserRepository.findOrCreateBySession(
       { name: from.first_name || undefined },
       String(from.id)
@@ -102,6 +110,8 @@ export class FlowManager {
       step: STEP.DAYS,
       dayIndex: 0,
       messageId: null,
+      ephemeralMessageId: opts.ephemeralMessageId ?? null,
+      receiverUserId: opts.receiverUserId ?? null,
       locale,
       calendar: calendarForDraft(draft),
     };
@@ -110,14 +120,26 @@ export class FlowManager {
   }
 
   /**
-   * Returns the chat id and message id currently driving the interactive flow
-   * for a session key, or null.
+   * Returns the chat and message addressing currently driving the interactive
+   * flow for a session key, or null. `messageId` addresses a regular message;
+   * `ephemeralMessageId` + `receiverUserId` address an ephemeral group form.
    * @param {string} sessionKey
-   * @returns {{ chatId: string, messageId: number | null } | null}
+   * @returns {{
+   *   chatId: string,
+   *   messageId: number | null,
+   *   ephemeralMessageId: number | null,
+   *   receiverUserId: number | null
+   * } | null}
    */
   getMessage(sessionKey) {
     const session = this.sessions.get(sessionKey);
-    return session ? { chatId: session.chatId, messageId: session.messageId } : null;
+    if (!session) return null;
+    return {
+      chatId: session.chatId,
+      messageId: session.messageId,
+      ephemeralMessageId: session.ephemeralMessageId,
+      receiverUserId: session.receiverUserId,
+    };
   }
 
   /**
@@ -129,6 +151,20 @@ export class FlowManager {
   setMessageId(sessionKey, messageId) {
     const session = this.sessions.get(sessionKey);
     if (session) session.messageId = messageId;
+  }
+
+  /**
+   * Records the ephemeral message id of an ephemeral flow form in a group
+   * chat (sender-visible only), so later steps can edit it in place.
+   * @param {string} sessionKey
+   * @param {number} ephemeralMessageId
+   */
+  setEphemeralMessageId(sessionKey, ephemeralMessageId) {
+    const session = this.sessions.get(sessionKey);
+    if (session) {
+      session.ephemeralMessageId = ephemeralMessageId;
+      session.messageId = null;
+    }
   }
 
   /**
@@ -251,6 +287,8 @@ export class FlowManager {
     const view = buildPollView(poll, String(session.fromId));
     const formChatId = session.chatId;
     const formMessageId = session.messageId;
+    const formEphemeralMessageId = session.ephemeralMessageId;
+    const formReceiverUserId = session.receiverUserId;
     this.sessions.delete(this.#key(session.chatId, session.fromId));
     return {
       type: 'done',
@@ -259,6 +297,8 @@ export class FlowManager {
       publishChatId: session.publishChatId ?? session.chatId,
       formChatId,
       formMessageId,
+      formEphemeralMessageId,
+      formReceiverUserId,
       content: buildPollMessage(view, session.locale),
     };
   }

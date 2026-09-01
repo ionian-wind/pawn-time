@@ -28,13 +28,15 @@ afterAll(() => closeDatabase());
 describe('bot commands menu', () => {
   it('builds slash commands with localized descriptions', () => {
     expect(buildCommands('en')).toEqual([
-      { command: 'new', description: 'Create a new scheduling poll' },
-      { command: 'drafts', description: 'List, edit or delete your drafts' },
+      { command: 'new', description: 'Create a new scheduling poll', is_ephemeral: true },
+      { command: 'drafts', description: 'List, edit or delete your drafts', is_ephemeral: true },
     ]);
 
     const ru = buildCommands('ru');
     expect(ru.map((c) => c.command)).toEqual(['new', 'drafts']);
     expect(ru[0].description).toContain('опрос');
+    expect(ru[0].is_ephemeral).toBe(true);
+    expect(ru[1].is_ephemeral).toBe(true);
   });
 
   it('registers the default and Russian command menus via setMyCommands', async () => {

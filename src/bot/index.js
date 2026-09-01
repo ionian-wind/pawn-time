@@ -4,7 +4,7 @@ import { getTranslator, normalizeLocale } from './i18n.js';
 import { logger } from './logger.js';
 import { decodeCallback } from './callback-data.js';
 import { buildPollView } from './poll-view.js';
-import { buildPollMessage, buildDraftsMessage } from './ui.js';
+import { buildPollMessage, buildDraftsMessage, esc } from './ui.js';
 import { PollService } from '../domains/poll/poll.service.js';
 import { VoteService } from '../domains/vote/vote.service.js';
 import { DraftService } from '../domains/draft/draft.service.js';
@@ -62,11 +62,38 @@ export function createBot(token, options = {}) {
     if (!from) return;
     const title = (ctx.match ?? '').trim();
     if (!title) {
-      if (ctx.reply) await ctx.reply(getTranslator(from.language_code)('usage'));
+      await replyUsage(bot, ctx);
       return;
     }
+    const groupChatId = isPrivate(ctx.chat) ? null : String(ctx.chat?.id ?? ctx.chatId);
+
+    if (groupChatId && ctx.message?.ephemeral_message_id != null) {
+      // The author's /new command is ephemeral (is_ephemeral), so the draft
+      // builder can be shown in the group, visible only to them. Falls back to
+      // the DM builder when Telegram cannot serve the ephemeral message.
+      const start = flow.start(groupChatId, groupChatId, from, title, {
+        receiverUserId: from.id,
+      });
+      try {
+        const sent = await sendEphemeralMessage(
+          bot,
+          groupChatId,
+          from.id,
+          start.content,
+          ctx.message.ephemeral_message_id
+        );
+        if (sent.ephemeral_message_id != null) {
+          flow.setEphemeralMessageId(start.sessionKey, sent.ephemeral_message_id);
+          return;
+        }
+        flow.clear(groupChatId, from.id);
+      } catch {
+        flow.clear(groupChatId, from.id);
+      }
+    }
+
     const dmChatId = String(from.id);
-    const publishChatId = isPrivate(ctx.chat) ? null : String(ctx.chat?.id ?? ctx.chatId);
+    const publishChatId = groupChatId;
     const start = flow.start(dmChatId, publishChatId, from, title);
     const sent = await sendMessage(bot, dmChatId, start.content);
     flow.setMessageId(start.sessionKey, sent.message_id);
@@ -81,6 +108,21 @@ export function createBot(token, options = {}) {
     );
     const drafts = DraftService.listDrafts(user.id);
     const content = buildDraftsMessage(drafts, normalizeLocale(from.language_code));
+    const groupChatId = isPrivate(ctx.chat) ? null : String(ctx.chat?.id ?? ctx.chatId);
+    if (groupChatId && ctx.message?.ephemeral_message_id != null) {
+      try {
+        await sendEphemeralMessage(
+          bot,
+          groupChatId,
+          from.id,
+          content,
+          ctx.message.ephemeral_message_id
+        );
+        return;
+      } catch {
+        // fall through to the DM list
+      }
+    }
     await sendMessage(bot, String(from.id), content);
   });
 
@@ -104,9 +146,19 @@ export function createBot(token, options = {}) {
     const result = flow.onCallback(String(ctx.chatId), from.id, query.data);
     if (result?.type === 'removed') {
       const message = ctx.callbackQuery?.message;
-      if (message?.message_id) {
+      if (message) {
         const chatId = String(message.chat?.id ?? ctx.chatId);
-        await editMessage(bot, chatId, message.message_id, result.content);
+        if (ephemeralReceiverId(message) != null) {
+          await editEphemeralMessage(
+            bot,
+            chatId,
+            ephemeralReceiverId(message),
+            message.ephemeral_message_id,
+            result.content
+          );
+        } else if (message.message_id) {
+          await editMessage(bot, chatId, message.message_id, result.content);
+        }
       }
       return;
     }
@@ -135,7 +187,24 @@ async function present(bot, flow, result) {
       }
     }
     // the draft form is transient: once the poll is live the interactive
-    // message is no longer needed, so remove it from the chat.
+    // message is no longer needed, so remove it from the chat (ephemeral
+    // forms use the ephemeral delete method).
+    if (
+      result.formChatId != null &&
+      result.formEphemeralMessageId != null &&
+      result.formReceiverUserId != null
+    ) {
+      try {
+        await bot.api.deleteEphemeralMessage({
+          chat_id: Number(result.formChatId),
+          receiver_user_id: result.formReceiverUserId,
+          ephemeral_message_id: result.formEphemeralMessageId,
+        });
+      } catch {
+        // the form may already be gone (removed by the user or Telegram)
+      }
+      return;
+    }
     if (result.formChatId != null && result.formMessageId != null) {
       try {
         await bot.api.deleteMessage({
@@ -149,11 +218,24 @@ async function present(bot, flow, result) {
     return;
   }
 
-  if (sess?.messageId) {
+  if (sess?.ephemeralMessageId != null && sess.receiverUserId != null) {
+    await editEphemeralMessage(
+      bot,
+      sess.chatId,
+      sess.receiverUserId,
+      sess.ephemeralMessageId,
+      result.content
+    );
+  } else if (sess?.messageId) {
     await editMessage(bot, sess.chatId, sess.messageId, result.content);
   } else if (sess) {
-    const sent = await sendMessage(bot, sess.chatId, result.content);
-    flow.setMessageId(result.sessionKey, sent.message_id);
+    const target = sess.receiverUserId != null ? String(sess.fromId) : sess.chatId;
+    const sent = await sendMessage(bot, target, result.content);
+    if (sess.receiverUserId != null) {
+      flow.setEphemeralMessageId(result.sessionKey, sent.ephemeral_message_id);
+    } else {
+      flow.setMessageId(result.sessionKey, sent.message_id);
+    }
   }
 }
 
@@ -209,42 +291,63 @@ async function handleDraftsCallback(bot, flow, ctx, decoded) {
   );
   const message = ctx.callbackQuery?.message;
   const chatId = String(message?.chat?.id ?? from.id);
+  const receiverUserId = ephemeralReceiverId(message);
+
+  const render = async (content) => {
+    if (message && receiverUserId != null) {
+      await editEphemeralMessage(
+        bot,
+        chatId,
+        receiverUserId,
+        message.ephemeral_message_id,
+        content
+      );
+    } else if (message?.message_id) {
+      await editMessage(bot, chatId, message.message_id, content);
+    }
+  };
 
   if (decoded.type === 'edit') {
     const draft = DraftService.getDraft(decoded.draftId, user.id);
     if (!draft) {
       // already deleted elsewhere: refresh the list in place
-      const content = buildDraftsMessage(
-        DraftService.listDrafts(user.id),
-        normalizeLocale(from.language_code)
+      await render(
+        buildDraftsMessage(DraftService.listDrafts(user.id), normalizeLocale(from.language_code))
       );
-      if (message?.message_id) await editMessage(bot, chatId, message.message_id, content);
       return true;
     }
     flow.clear(chatId, from.id);
-    const resumed = flow.resume(chatId, null, from, draft);
+    const resumed = flow.resume(
+      chatId,
+      null,
+      from,
+      draft,
+      receiverUserId != null
+        ? { receiverUserId, ephemeralMessageId: message?.ephemeral_message_id }
+        : {}
+    );
     if (!resumed) return true;
-    if (message?.message_id) flow.setMessageId(resumed.sessionKey, message.message_id);
+    if (receiverUserId != null && message?.ephemeral_message_id != null) {
+      flow.setEphemeralMessageId(resumed.sessionKey, message.ephemeral_message_id);
+    } else if (message?.message_id) {
+      flow.setMessageId(resumed.sessionKey, message.message_id);
+    }
     await present(bot, flow, resumed);
     return true;
   }
 
   if (decoded.type === 'delall') {
     DraftService.deleteAllDrafts(user.id);
-    const content = buildDraftsMessage(
-      DraftService.listDrafts(user.id),
-      normalizeLocale(from.language_code)
+    await render(
+      buildDraftsMessage(DraftService.listDrafts(user.id), normalizeLocale(from.language_code))
     );
-    if (message?.message_id) await editMessage(bot, chatId, message.message_id, content);
     return true;
   }
 
   DraftService.deleteDraft(decoded.draftId, user.id);
-  const content = buildDraftsMessage(
-    DraftService.listDrafts(user.id),
-    normalizeLocale(from.language_code)
+  await render(
+    buildDraftsMessage(DraftService.listDrafts(user.id), normalizeLocale(from.language_code))
   );
-  if (message?.message_id) await editMessage(bot, chatId, message.message_id, content);
   return true;
 }
 
@@ -350,7 +453,7 @@ function stagedKey(sessionId, pollId) {
  * @param {import('node-telegram-bot-api').Bot} bot
  * @param {string} chatId
  * @param {{ text?: string, reply_markup?: object, rich_message?: object }} content
- * @returns {Promise<{ message_id: number }>}
+ * @returns {Promise<{ message_id: number, ephemeral_message_id?: number }>}
  */
 async function sendMessage(bot, chatId, content) {
   const chatIdNum = Number(chatId);
@@ -359,6 +462,38 @@ async function sendMessage(bot, chatId, content) {
   }
   return bot.api.sendMessage({
     chat_id: chatIdNum,
+    text: content.text,
+    parse_mode: 'HTML',
+    reply_markup: content.reply_markup,
+  });
+}
+
+/**
+ * Sends an ephemeral message: a private reply to the author inside a group,
+ * triggered by the incoming ephemeral message (`replyEphemeralMessageId`). Only
+ * the given user and the bot can see it.
+ * @param {import('node-telegram-bot-api').Bot} bot
+ * @param {string} chatId - the group chat
+ * @param {number} receiverUserId - the only user who sees the message
+ * @param {{ text?: string, reply_markup?: object, rich_message?: object }} content
+ * @param {number} replyEphemeralMessageId - the author's triggering ephemeral message
+ * @returns {Promise<{ message_id: number, ephemeral_message_id?: number }>}
+ */
+async function sendEphemeralMessage(bot, chatId, receiverUserId, content, replyEphemeralMessageId) {
+  const chatIdNum = Number(chatId);
+  const trigger = { reply_parameters: { ephemeral_message_id: replyEphemeralMessageId } };
+  if (content.rich_message) {
+    return bot.api.sendRichMessage({
+      chat_id: chatIdNum,
+      ephemeral_message_parameters: { receiver_user_id: receiverUserId },
+      ...trigger,
+      rich_message: content.rich_message,
+    });
+  }
+  return bot.api.sendMessage({
+    chat_id: chatIdNum,
+    ephemeral_message_parameters: { receiver_user_id: receiverUserId },
+    ...trigger,
     text: content.text,
     parse_mode: 'HTML',
     reply_markup: content.reply_markup,
@@ -391,6 +526,83 @@ async function editMessage(bot, chatId, messageId, content) {
     parse_mode: 'HTML',
     reply_markup: content.reply_markup,
   });
+}
+
+/**
+ * Edits an ephemeral message's body in place. Ephemeral messages are addressed
+ * by the {chat, receiver user, ephemeral id} tuple and cannot be edited with
+ * the regular editMessageText.
+ * @param {import('node-telegram-bot-api').Bot} bot
+ * @param {string} chatId
+ * @param {number} receiverUserId
+ * @param {number} ephemeralMessageId
+ * @param {{ text?: string, reply_markup?: object, rich_message?: object }} content
+ * @returns {Promise<void>}
+ */
+async function editEphemeralMessage(bot, chatId, receiverUserId, ephemeralMessageId, content) {
+  const chatIdNum = Number(chatId);
+  if (content.rich_message) {
+    await bot.api.editEphemeralMessageText({
+      chat_id: chatIdNum,
+      receiver_user_id: receiverUserId,
+      ephemeral_message_id: ephemeralMessageId,
+      rich_message: content.rich_message,
+    });
+    return;
+  }
+  await bot.api.editEphemeralMessageText({
+    chat_id: chatIdNum,
+    receiver_user_id: receiverUserId,
+    ephemeral_message_id: ephemeralMessageId,
+    text: content.text,
+    parse_mode: 'HTML',
+    reply_markup: content.reply_markup,
+  });
+}
+
+/**
+ * The receiver user id of an ephemeral message that appears as the source of a
+ * callback, or undefined when the message is a regular one.
+ * @param {import('node-telegram-bot-api').Message | undefined} message
+ * @returns {number | undefined}
+ */
+function ephemeralReceiverId(message) {
+  if (!message || message.ephemeral_message_id == null) return undefined;
+  return message.receiver_user?.id ?? undefined;
+}
+
+/**
+ * Replies to `/new` (no title) with the usage hint. Private chats keep the
+ * plain reply; in a group the hint is author-only (ephemeral when the command
+ * is ephemeral, otherwise via the author's DM).
+ * @param {import('node-telegram-bot-api').Bot} bot
+ * @param {import('node-telegram-bot-api').Context} ctx
+ * @returns {Promise<void>}
+ */
+async function replyUsage(bot, ctx) {
+  const from = ctx.from;
+  if (!from) return;
+  const usage = getTranslator(from.language_code)('usage');
+  if (isPrivate(ctx.chat)) {
+    if (ctx.reply) await ctx.reply(usage);
+    return;
+  }
+  const groupChatId = String(ctx.chat?.id ?? ctx.chatId);
+  if (ctx.message?.ephemeral_message_id != null) {
+    try {
+      await sendEphemeralMessage(
+        bot,
+        groupChatId,
+        from.id,
+        { text: esc(usage) },
+        ctx.message.ephemeral_message_id
+      );
+      return;
+    } catch {
+      // ephemeral hint unavailable: fall back to the author's DM
+    }
+  }
+  await sendMessage(bot, String(from.id), { text: esc(usage) });
 }
 
 /**
