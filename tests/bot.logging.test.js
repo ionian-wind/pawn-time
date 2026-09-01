@@ -2,6 +2,11 @@ import { jest } from '@jest/globals';
 import { createBot } from '../src/bot/index.js';
 import { logger, setLogLevel } from '../src/bot/logger.js';
 
+/**
+ *
+ * @param body
+ * @param status
+ */
 function fakeResponse(body, status = 200) {
   return { status, text: async () => JSON.stringify(body) };
 }
@@ -11,15 +16,22 @@ const okOptions = {
   maxRetries: 0,
 };
 
+/**
+ *
+ */
 function capture() {
   const logs = [];
-  const logSpy = jest.spyOn(console, 'log').mockImplementation((...a) => logs.push(['log', ...a]));
-  const errSpy = jest
-    .spyOn(console, 'error')
-    .mockImplementation((...a) => logs.push(['err', ...a]));
-  return { logs, logSpy, errSpy };
+  const writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation((...args) => {
+    if (typeof args[0] === 'string') logs.push(args[0]);
+    return true;
+  });
+  return { logs, writeSpy };
 }
 
+/**
+ *
+ * @param {...any} spies
+ */
 function restore(...spies) {
   spies.forEach((s) => s.mockRestore());
 }
@@ -28,22 +40,22 @@ describe('logger module', () => {
   afterEach(() => setLogLevel('info'));
 
   it('emits a JSON line at the configured level', () => {
-    const { logs, logSpy, errSpy } = capture();
+    const { logs, writeSpy } = capture();
     logger.info('hello', { n: 1 });
     logger.error('boom', { code: 'E' });
-    expect(logs.length).toBe(2);
-    expect(JSON.parse(logs[0][1])).toMatchObject({ level: 'info', msg: 'hello', n: 1 });
-    expect(JSON.parse(logs[1][1])).toMatchObject({ level: 'error', msg: 'boom', code: 'E' });
-    restore(logSpy, errSpy);
+    expect(logs).toHaveLength(2);
+    expect(JSON.parse(logs[0])).toMatchObject({ level: 'info', msg: 'hello', n: 1 });
+    expect(JSON.parse(logs[1])).toMatchObject({ level: 'error', msg: 'boom', code: 'E' });
+    restore(writeSpy);
   });
 
   it('suppresses output below the threshold', () => {
     setLogLevel('silent');
-    const { logs, logSpy, errSpy } = capture();
+    const { logs, writeSpy } = capture();
     logger.info('quiet');
     logger.error('also quiet');
     expect(logs).toHaveLength(0);
-    restore(logSpy, errSpy);
+    restore(writeSpy);
   });
 });
 
@@ -55,12 +67,11 @@ describe('bot logging', () => {
 
   it('logs every Telegram API call and its response', async () => {
     const bot = createBot('123:fake', okOptions);
-    const { logs, logSpy, errSpy } = capture();
+    const { logs, writeSpy } = capture();
 
     await bot.api.getMe();
 
     const apiLines = logs
-      .map((l) => l[1])
       .map((s) => {
         try {
           return JSON.parse(s);
@@ -72,12 +83,12 @@ describe('bot logging', () => {
     expect(apiLines).toEqual(
       expect.arrayContaining([expect.objectContaining({ msg: 'telegram api', method: 'getMe' })])
     );
-    restore(logSpy, errSpy);
+    restore(writeSpy);
   });
 
   it('logs incoming messages with sender and text', async () => {
     const bot = createBot('123:fake', okOptions);
-    const { logs, logSpy, errSpy } = capture();
+    const { logs, writeSpy } = capture();
 
     await bot.handleUpdate({
       update_id: 1,
@@ -90,16 +101,16 @@ describe('bot logging', () => {
       },
     });
 
-    const lines = logs.map((l) => l[1]).join('\n');
+    const lines = logs.join('\n');
     expect(lines).toContain('"msg":"incoming message"');
     expect(lines).toContain('"chatId":111');
     expect(lines).toContain('"text":"hello"');
-    restore(logSpy, errSpy);
+    restore(writeSpy);
   });
 
   it('logs callback queries', async () => {
     const bot = createBot('123:fake', okOptions);
-    const { logs, logSpy, errSpy } = capture();
+    const { logs, writeSpy } = capture();
 
     await bot.handleUpdate({
       update_id: 2,
@@ -111,9 +122,9 @@ describe('bot logging', () => {
       },
     });
 
-    const lines = logs.map((l) => l[1]).join('\n');
+    const lines = logs.join('\n');
     expect(lines).toContain('"msg":"incoming callback_query"');
     expect(lines).toContain('"data":"day:2026-09-01"');
-    restore(logSpy, errSpy);
+    restore(writeSpy);
   });
 });

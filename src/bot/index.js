@@ -1,4 +1,4 @@
-import { Bot } from 'node-telegram-bot-api';
+import { PawnBot } from './pawn-bot.js';
 import { FlowManager } from './flow.js';
 import { getTranslator, normalizeLocale } from './i18n.js';
 import { logger } from './logger.js';
@@ -9,7 +9,8 @@ import { PollService } from '../domains/poll/poll.service.js';
 import { VoteService } from '../domains/vote/vote.service.js';
 import { DraftService } from '../domains/draft/draft.service.js';
 import { UserRepository } from '../domains/user/user.repository.js';
-import { InboxRepository, OutboxRepository } from '../domains/message/message.pipeline.js';
+import { OutboxRepository } from '../domains/message/message.pipeline.js';
+import { describeApiError, isRetryableApiError } from './api-error.js';
 
 /**
  * Tracks the chat + message id of every published poll so that votes can be
@@ -43,75 +44,13 @@ const pendingVotes = new Map();
  * Telegram API call/response is logged by wrapping `bot.api.request`.
  * @param {string} token
  * @param {object} [options]
- * @returns {import('node-telegram-bot-api').Bot}
+ * @returns {PawnBot}
  */
 export function createBot(token, options = {}) {
-  const bot = new Bot(token, options);
+  const bot = new PawnBot(token, options);
   const flow = new FlowManager();
 
-  // The unfiltered Telegram API client. Outbound sends go through the outbox
-  // journal (so nothing is lost across a restart); `flushOutbox` uses this raw
-  // request to drain the journal without re-recording.
-  const rawApiRequest = bot.api.request.bind(bot.api);
-
-  withApiLogging(bot, rawApiRequest);
-
-  // The inbox wrapper: persist every update before handling so a crash mid-
-  // handling never loses an event, and dedupe by update_id (Telegram redelivery).
-  const rawHandleUpdate = bot.handleUpdate.bind(bot);
-  bot.handleUpdate = async (update) => {
-    if (!update || typeof update.update_id !== 'number') {
-      await rawHandleUpdate(update);
-      return;
-    }
-    const recorded = InboxRepository.record(update.update_id, update);
-    if (!recorded) return;
-    try {
-      await rawHandleUpdate(update);
-    } finally {
-      InboxRepository.markProcessed(recorded.id);
-    }
-  };
-
-  /**
-   * Re-dispatches any inbound updates that were persisted but never finished
-   * handling (e.g. the process died mid-handling). Returns how many were
-   * replayed.
-   * @returns {Promise<number>}
-   */
-  bot.replayInbox = async () => {
-    const pending = InboxRepository.listUnprocessed();
-    for (const message of pending) {
-      try {
-        await rawHandleUpdate(message.payload);
-      } finally {
-        InboxRepository.markProcessed(message.id);
-      }
-    }
-    return pending.length;
-  };
-
-  /**
-   * Drains any outbound messages left in the outbox from a previous run (or
-   * enqueued programmatically), dispatching them to the real Telegram API.
-   * Returns how many pending rows were processed.
-   * @param {number} [limit]
-   * @returns {Promise<number>}
-   */
-  bot.flushOutbox = async (limit = 100) => {
-    const pending = OutboxRepository.listPending(limit);
-    for (const message of pending) {
-      try {
-        await rawApiRequest(message.method, message.payload);
-        OutboxRepository.markSent(message.id);
-      } catch (err) {
-        OutboxRepository.markFailed(message.id, describeApiError(err), {
-          giveUp: !isRetryableApiError(err),
-        });
-      }
-    }
-    return pending.length;
-  };
+  withApiLogging(bot, bot.rawApiRequest);
 
   bot.use(async (ctx, next) => {
     logIncoming(ctx);
@@ -529,29 +468,6 @@ function journalOutbound(method, params) {
   const chatId = params?.chat_id;
   if (chatId == null) return null;
   return OutboxRepository.record(String(chatId), method, params);
-}
-
-/**
- * Human-readable error text for a recorded API failure.
- * @param {*} err
- * @returns {string}
- */
-function describeApiError(err) {
-  if (err?.description) return `${err.description} (${err?.errorCode ?? 'no code'})`;
-  return err?.message ?? String(err);
-}
-
-/**
- * A request is retryable when it failed before reaching Telegram (no HTTP
- * status) or with a server-side status (5xx); permanent 4xx rejection is a
- * definite failure.
- * @param {*} err
- * @returns {boolean}
- */
-function isRetryableApiError(err) {
-  const code = err?.errorCode ?? err?.response?.status;
-  if (code == null) return true;
-  return code >= 500;
 }
 
 /**

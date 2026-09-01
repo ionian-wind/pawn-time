@@ -1,55 +1,46 @@
+import pino from 'pino';
+
 import { config } from '../config/index.js';
 
 /**
- * Minimal leveled logger. Emits one JSON line per record so the output is
- * greppable and machine-readable. The level is read from LOG_LEVEL at import
- * time.
+ * Leveled logger backed by Pino. Emits one JSON line per record to the console
+ * (stdout), which is Pino's default output. The level is read from LOG_LEVEL
+ * at import time.
  */
 
-const LEVELS = { debug: 10, info: 20, warn: 30, error: 40, silent: 99 };
+/** @type {Set<string>} */
+const LEVELS = new Set(['debug', 'info', 'warn', 'error', 'silent']);
 
-/** @type {number} */
-let threshold = Object.prototype.hasOwnProperty.call(LEVELS, config.logLevel)
-  ? LEVELS[config.logLevel]
-  : LEVELS.info;
+const root = pino(
+  {
+    level: LEVELS.has(config.logLevel) ? config.logLevel : 'info',
+    formatters: {
+      level: (label) => ({ level: label }),
+    },
+  },
+  process.stdout
+);
 
 /**
  * Overrides the effective log level (useful in tests).
- * @param {keyof typeof LEVELS} level
+ * @param {string} level
  */
 export function setLogLevel(level) {
-  if (Object.prototype.hasOwnProperty.call(LEVELS, level)) threshold = LEVELS[level];
+  if (LEVELS.has(level)) root.level = level;
 }
 
-/**
- * Emits a log record when the record's level meets the threshold.
- * @param {keyof typeof LEVELS} level
- * @param {string} message
- * @param {Record<string, unknown>} [data]
- */
-function write(level, message, data) {
-  const line = JSON.stringify({
-    time: new Date().toISOString(),
-    level,
-    msg: message,
-    ...data,
-  });
-  if (level === 'error' || level === 'warn') console.error(line);
-  else console.log(line);
-}
-
-/** @type {Record<keyof typeof LEVELS, (msg: string, data?: Record<string, unknown>) => void>} */
+/** @type {Record<string, (msg: string, data?: Record<string, unknown>) => void>} */
 export const logger = {
   debug(msg, data) {
-    if (threshold <= LEVELS.debug) write('debug', msg, data);
+    root.debug(data ?? {}, msg);
   },
   info(msg, data) {
-    if (threshold <= LEVELS.info) write('info', msg, data);
+    root.info(data ?? {}, msg);
   },
   warn(msg, data) {
-    if (threshold <= LEVELS.warn) write('warn', msg, data);
+    root.warn(data ?? {}, msg);
   },
   error(msg, data) {
-    if (threshold <= LEVELS.error) write('error', msg, data);
+    root.error(data ?? {}, msg);
   },
 };
