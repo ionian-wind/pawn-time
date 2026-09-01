@@ -16,6 +16,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "bot": "node ./src/bot/run.js",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -25,17 +26,17 @@
     ]
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
-    "node-telegram-bot-api": "2.0.0"
+    "better-sqlite3": "13.0.3",
+    "node-telegram-bot-api": "2.1.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.0.0",
-    "eslint": "^10.0.0",
-    "eslint-config-prettier": "^10.0.0",
-    "globals": "^15.0.0",
-    "husky": "^9.0.0",
-    "jest": "^30.0.0",
-    "lint-staged": "^16.0.0",
-    "prettier": "^3.0.0"
+    "@eslint/js": "10.0.1",
+    "eslint": "10.9.1",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "17.11.0",
+    "husky": "9.1.7",
+    "jest": "30.5.0",
+    "lint-staged": "17.4.1",
+    "prettier": "3.9.6"
   }
 }

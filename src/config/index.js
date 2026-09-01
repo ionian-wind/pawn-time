@@ -55,4 +55,20 @@ export const config = {
   get env() {
     return envString('NODE_ENV', 'development');
   },
+
+  /**
+   * The Telegram Bot API token used by the bot front-end.
+   * @type {string | undefined}
+   */
+  get telegramBotToken() {
+    return envString('TELEGRAM_BOT_TOKEN');
+  },
+
+  /**
+   * Logging verbosity: debug | info | warn | error | silent.
+   * @type {string}
+   */
+  get logLevel() {
+    return envString('LOG_LEVEL', 'info');
+  },
 };

@@ -119,6 +119,21 @@ function initializeSchema(database) {
       UNIQUE(poll_option_id, participant_id)
     );
 
+    CREATE TABLE IF NOT EXISTS drafts (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      author_user_id TEXT NOT NULL,
+      chat_id TEXT,
+      poll_type TEXT NOT NULL DEFAULT 'datetime',
+      selected_dates TEXT NOT NULL DEFAULT '[]',
+      time_slots TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_drafts_author_user_id ON drafts(author_user_id);
+
     CREATE INDEX IF NOT EXISTS idx_poll_options_poll_id ON poll_options(poll_id);
     CREATE INDEX IF NOT EXISTS idx_votes_option_id ON votes(poll_option_id);
     CREATE INDEX IF NOT EXISTS idx_votes_participant_id ON votes(participant_id);
@@ -216,7 +231,7 @@ function migrateSchema(database) {
     `);
   }
 
-  database.pragma('user_version = 4');
+  database.pragma('user_version = 5');
 }
 
 /**
