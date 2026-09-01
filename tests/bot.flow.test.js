@@ -141,7 +141,7 @@ describe('Bot /new flow', () => {
     const filled = richButtons(afterSlot.content).find((b) =>
       b.text.includes(slot.split(':').pop())
     );
-    expect(filled.text.startsWith('\u25A3')).toBe(true); // filled marker = selected
+    expect(filled.style).toBe('primary'); // primary highlight = selected
 
     // navigate to day 2 and select a slot there
     const nextNav = buttonWith(afterSlot.content, (d) => d?.type === 'nav' && d.dir === 'next');
@@ -218,8 +218,8 @@ describe('Bot /new flow', () => {
     expect(back.type).toBe('render');
     expect(dayButtons(back.content).length).toBeGreaterThan(0);
 
-    // the previously selected day is still checked on the calendar
-    const checked = richButtons(back.content).some((b) => b.text.startsWith('\u2611'));
+    // the previously selected day is still highlighted on the calendar
+    const checked = richButtons(back.content).some((b) => b.style === 'primary');
     expect(checked).toBe(true);
   });
 

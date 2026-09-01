@@ -82,7 +82,10 @@ export function buildDaysMessage(draft, calendar, locale = 'en', maxDays = confi
         const active = selected.has(cell.isoDate);
         const disabled = past || (atLimit && !active); // no more picks once at the day limit
         const options = disabled ? { disabled: {} } : { callback_data: dayCallback(cell.isoDate) };
-        return richMessageButton(`${active ? '\u2611 ' : ''}${cell.day}`, options);
+        return richMessageButton(String(cell.day), {
+          ...(active ? { style: 'primary' } : {}),
+          ...options,
+        });
       })
     );
   }
@@ -205,8 +208,10 @@ export function buildTimesMessage(
         const options = disabled
           ? { disabled: {} }
           : { callback_data: slotCallback(date, slot.start) };
-        const label = `${active ? '\u25A3' : '\u25A2'} ${slot.start}`;
-        return richMessageButton(label, options);
+        return richMessageButton(slot.start, {
+          ...(active ? { style: 'primary' } : {}),
+          ...options,
+        });
       })
     );
   }
