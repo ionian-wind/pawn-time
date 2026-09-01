@@ -3,13 +3,19 @@ import { normalizeLocale, getTranslator } from '../src/bot/i18n.js';
 import {
   buildDaysMessage,
   buildTimesMessage,
-  buildPublishedMessage,
+  buildPollMessage,
   richButtons,
   richTexts,
 } from '../src/bot/ui.js';
+import { buildPollView } from '../src/bot/poll-view.js';
 import { generateTimeSlots } from '../src/bot/slots.js';
-import { DraftService, UserRepository } from '../src/index.js';
+import { DraftService, VoteService, UserRepository } from '../src/index.js';
 
+/**
+ *
+ * @param author
+ * @param extra
+ */
 function draftWith(author, extra = {}) {
   const draft = DraftService.createDraft({ authorUserId: author.id, ...extra });
   return { ...draft };
@@ -99,25 +105,84 @@ describe('UI localization', () => {
     expect(labels).toEqual(expect.arrayContaining(['OK \u2713', 'Reset']));
   });
 
-  it('localizes the published poll announcement', () => {
+  it('builds the poll as date sections with grouped slots and vote/reject buttons', () => {
     const author = UserRepository.create({ name: 'A' });
     const draft = draftWith(author);
     DraftService.setTitle(draft.id, author.id, 'Sync');
     DraftService.addDate(draft.id, author.id, '2026-09-10');
     DraftService.toggleTimeSlot(draft.id, author.id, {
       date: '2026-09-10',
-      start: '10:00',
-      end: '10:30',
+      start: '09:00',
+      end: '09:30',
+    });
+    DraftService.toggleTimeSlot(draft.id, author.id, {
+      date: '2026-09-10',
+      start: '09:30',
+      end: '10:00',
+    });
+    DraftService.toggleTimeSlot(draft.id, author.id, {
+      date: '2026-09-11',
+      start: '14:00',
+      end: '14:30',
+    });
+    const poll = DraftService.publishDraft(draft.id, author.id);
+    const view = buildPollView(poll, String(author.id));
+
+    const ru = buildPollMessage(view, 'ru');
+    expect(richTexts(ru).join(' ')).toContain('опубликован');
+    expect(richTexts(ru).join(' ')).toContain('Участников:');
+
+    const en = buildPollMessage(view, 'en');
+    expect(richTexts(en).join(' ')).toContain('is live');
+    // date sections carry their own heading
+    expect(richTexts(en).join(' ')).toContain('Sep 10');
+    expect(richTexts(en).join(' ')).toContain('Sep 11');
+    // consecutive 30-minute slots are merged into one range
+    expect(richButtons(en).some((b) => b.text.includes('09:00\u201310:00'))).toBe(true);
+    expect(richButtons(en).some((b) => b.text.includes('14:00\u201314:30'))).toBe(true);
+    // per-row vote and reject buttons, no global Vote button
+    const stageButtons = richButtons(en).filter((b) =>
+      String(b.callback_data).startsWith('stage:')
+    );
+    expect(stageButtons.length).toBe(4);
+    expect(richButtons(en).some((b) => String(b.callback_data).startsWith('vstart:'))).toBe(false);
+
+    const staged = buildPollMessage(view, 'en', new Map());
+    expect(richButtons(staged).some((b) => String(b.callback_data) === `vok:${poll.id}`)).toBe(
+      true
+    );
+    expect(richButtons(staged).some((b) => String(b.callback_data) === `vcancel:${poll.id}`)).toBe(
+      true
+    );
+  });
+
+  it('shows totals and hides the vote buttons once the viewer voted the row', () => {
+    const author = UserRepository.create({ name: 'A' });
+    const draft = draftWith(author);
+    DraftService.setTitle(draft.id, author.id, 'Sync');
+    DraftService.addDate(draft.id, author.id, '2026-09-10');
+    DraftService.toggleTimeSlot(draft.id, author.id, {
+      date: '2026-09-10',
+      start: '09:00',
+      end: '09:30',
+    });
+    DraftService.toggleTimeSlot(draft.id, author.id, {
+      date: '2026-09-10',
+      start: '09:30',
+      end: '10:00',
     });
     const poll = DraftService.publishDraft(draft.id, author.id);
 
-    const ru = buildPublishedMessage(poll, 'ru');
-    expect(ru.text).toContain('опубликован');
-    expect(ru.text).toContain('Да');
-    expect(ru.text).toContain('сент');
+    const view = buildPollView(poll, String(author.id));
+    for (const id of view.rows[0].ids) {
+      VoteService.castVote(poll.id, String(author.id), id, 'yes');
+    }
 
-    const en = buildPublishedMessage(poll, 'en');
-    expect(en.text).toContain('is live');
-    expect(en.text).toContain('Yes');
+    const after = buildPollMessage(buildPollView(poll, String(author.id)), 'en');
+    const texts = richButtons(after).map((b) => b.text);
+    expect(texts.some((t) => t.includes('\u27131'))).toBe(true);
+    expect(richButtons(after).some((b) => String(b.callback_data).startsWith('stage:'))).toBe(
+      false
+    );
   });
 });

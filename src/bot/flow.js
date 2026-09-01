@@ -3,8 +3,9 @@ import { DraftService } from '../domains/draft/draft.service.js';
 import { decodeCallback, STEP } from './callback-data.js';
 import { generateTimeSlots } from './slots.js';
 import { currentCalendar, shiftMonth } from './calendar.js';
-import { normalizeLocale } from './i18n.js';
-import { buildDaysMessage, buildTimesMessage, buildPublishedMessage } from './ui.js';
+import { normalizeLocale, getTranslator } from './i18n.js';
+import { buildDaysMessage, buildTimesMessage, buildPollMessage } from './ui.js';
+import { buildPollView } from './poll-view.js';
 
 const TIME_SLOTS = generateTimeSlots();
 
@@ -31,7 +32,7 @@ export class FlowManager {
    * @param {string | null} publishChatId
    * @param {import('node-telegram-bot-api').User} from
    * @param {string} title
-   * @returns {{ sessionKey: string, authorId: string, draftId: string, content: Object }}
+   * @returns {{sessionKey: string, authorId: string, draftId: string, content: object}}
    */
   start(dmChatId, publishChatId, from, title) {
     const user = UserRepository.findOrCreateBySession(
@@ -69,6 +70,43 @@ export class FlowManager {
       draftId: draft.id,
       content: this.#daysContent(active, session),
     };
+  }
+
+  /**
+   * Re-opens an existing draft for the author, resuming the flow at the
+   * day-selection step. The calendar starts on the month of the first selected
+   * date so previously chosen days are visible. Returns null when the draft
+   * does not belong to the user.
+   * @param {string} chatId - the message showing the drafts list (the flow
+   *   continues in the same chat)
+   * @param {string | null} [publishChatId]
+   * @param {import('node-telegram-bot-api').User} from
+   * @param {import('../domains/draft/draft.entity.js').Draft} draft
+   * @returns {import('./flow.entity.js').FlowResult | null}
+   */
+  resume(chatId, publishChatId, from, draft) {
+    const user = UserRepository.findOrCreateBySession(
+      { name: from.first_name || undefined },
+      String(from.id)
+    );
+    if (draft.authorUserId !== user.id) return null;
+
+    const locale = normalizeLocale(from.language_code);
+    const sessionKey = this.#key(chatId, from.id);
+    const session = {
+      chatId,
+      publishChatId: publishChatId ?? null,
+      fromId: from.id,
+      draftId: draft.id,
+      authorId: user.id,
+      step: STEP.DAYS,
+      dayIndex: 0,
+      messageId: null,
+      locale,
+      calendar: calendarForDraft(draft),
+    };
+    this.sessions.set(sessionKey, session);
+    return this.#render(session, this.#daysContent(draft, session));
   }
 
   /**
@@ -110,7 +148,10 @@ export class FlowManager {
     return this.#dispatch(session, decoded);
   }
 
-  /** @param {import('./flow.entity.js').FlowSession} session */
+  /**
+   * @param {import('./flow.entity.js').FlowSession} session
+   * @param decoded
+   */
   #dispatch(session, decoded) {
     switch (decoded.type) {
       case 'day': {
@@ -163,6 +204,22 @@ export class FlowManager {
         session.dayIndex = 0;
         return this.#render(session, this.#daysContent(draft, session));
       }
+      case 'remove': {
+        const draft = DraftService.getDraft(session.draftId, session.authorId);
+        if (!draft) return null;
+        DraftService.deleteDraft(session.draftId, session.authorId);
+        const key = this.#key(session.chatId, session.fromId);
+        this.sessions.delete(key);
+        const content = { text: getTranslator(session.locale)('draftRemoved') };
+        return {
+          type: 'removed',
+          published: false,
+          poll: null,
+          content,
+          sessionKey: key,
+          publishChatId: session.publishChatId,
+        };
+      }
       default:
         return null;
     }
@@ -191,22 +248,29 @@ export class FlowManager {
 
     const poll = DraftService.publishDraft(session.draftId, session.authorId);
     if (!poll) return this.#render(session, this.#timesContent(draft, session));
+    const view = buildPollView(poll, String(session.fromId));
     this.sessions.delete(this.#key(session.chatId, session.fromId));
     return {
       type: 'done',
       published: true,
       poll,
-      publishChatId: session.publishChatId,
-      content: buildPublishedMessage(poll, session.locale),
+      publishChatId: session.publishChatId ?? session.chatId,
+      content: buildPollMessage(view, session.locale),
     };
   }
 
-  /** @param {import('./flow.entity.js').FlowSession} session */
+  /**
+   * @param draft
+   * @param {import('./flow.entity.js').FlowSession} session
+   */
   #daysContent(draft, session) {
     return buildDaysMessage(draft, session.calendar, session.locale);
   }
 
-  /** @param {import('./flow.entity.js').FlowSession} session */
+  /**
+   * @param draft
+   * @param {import('./flow.entity.js').FlowSession} session
+   */
   #timesContent(draft, session) {
     const dates = draft.selectedDates;
     if (dates.length === 0) return this.#daysContent(draft, session);
@@ -224,7 +288,10 @@ export class FlowManager {
     this.sessions.delete(this.#key(chatId, fromId));
   }
 
-  /** @param {import('./flow.entity.js').FlowSession} session */
+  /**
+   * @param {import('./flow.entity.js').FlowSession} session
+   * @param content
+   */
   #render(session, content) {
     return {
       type: 'render',
@@ -236,7 +303,10 @@ export class FlowManager {
     };
   }
 
-  /** @param {string} chatId @param {number} fromId */
+  /**
+   * @param {string} chatId @param {number} fromId
+   * @param fromId
+   */
   #key(chatId, fromId) {
     return `${chatId}:${fromId}`;
   }
@@ -265,4 +335,19 @@ function addMinutes(hhmm, minutes) {
   const hh = String(Math.floor(total / 60) % 24).padStart(2, '0');
   const mm = String(total % 60).padStart(2, '0');
   return `${hh}:${mm}`;
+}
+
+/**
+ * Returns the calendar month to open when resuming a draft: the month of its
+ * first selected date, or the current month when nothing is selected yet.
+ * @param {import('../domains/draft/draft.entity.js').Draft} draft
+ * @returns {{ year: number, monthIndex: number }}
+ */
+function calendarForDraft(draft) {
+  const first = draft.selectedDates[0];
+  if (first) {
+    const [year, month] = first.split('-').map(Number);
+    if (Number.isFinite(year) && Number.isFinite(month)) return { year, monthIndex: month - 1 };
+  }
+  return currentCalendar();
 }

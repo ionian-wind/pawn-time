@@ -134,6 +134,35 @@ function initializeSchema(database) {
 
     CREATE INDEX IF NOT EXISTS idx_drafts_author_user_id ON drafts(author_user_id);
 
+    CREATE TABLE IF NOT EXISTS incoming_messages (
+      id TEXT PRIMARY KEY,
+      update_id INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      received_at TEXT NOT NULL DEFAULT (datetime('now')),
+      processed_at TEXT,
+      UNIQUE(update_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_incoming_unprocessed
+      ON incoming_messages(processed_at);
+
+    CREATE TABLE IF NOT EXISTS outgoing_messages (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      method TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'sent', 'failed')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      sent_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_outgoing_pending
+      ON outgoing_messages(status, created_at);
+
     CREATE INDEX IF NOT EXISTS idx_poll_options_poll_id ON poll_options(poll_id);
     CREATE INDEX IF NOT EXISTS idx_votes_option_id ON votes(poll_option_id);
     CREATE INDEX IF NOT EXISTS idx_votes_participant_id ON votes(participant_id);

@@ -1,5 +1,6 @@
 import { DraftRepository } from './draft.repository.js';
 import { PollService } from '../poll/poll.service.js';
+import { config } from '../../config/index.js';
 
 /**
  * Business logic for managing scheduling drafts.
@@ -51,16 +52,20 @@ export class DraftService {
   }
 
   /**
-   * Adds a day to the draft's selection.
+   * Adds a day to the draft's selection. Adding beyond `maxDays` (defaults to
+   * the configured `config.maxScheduleDays`) is refused: the draft is returned
+   * unchanged.
    * @param {string} id
    * @param {string} authorUserId
    * @param {string} date - ISO date (YYYY-MM-DD)
+   * @param {number} [maxDays]
    * @returns {import('./draft.entity.js').Draft | null}
    */
-  static addDate(id, authorUserId, date) {
+  static addDate(id, authorUserId, date, maxDays = config.maxScheduleDays) {
     const draft = this.getDraft(id, authorUserId);
     if (!draft) return null;
     const selectedDates = new Set(draft.selectedDates);
+    if (!selectedDates.has(date) && selectedDates.size >= maxDays) return draft;
     selectedDates.add(date);
     return DraftRepository.update(id, {
       selectedDates: [...selectedDates].sort(),
@@ -111,19 +116,26 @@ export class DraftService {
   }
 
   /**
-   * Toggles a 30-minute time slot for a date on/off.
+   * Toggles a 30-minute time slot for a date on/off. Adding beyond
+   * `maxPerDay` (defaults to the configured `config.maxSlotsPerDay`) for a
+   * single date is refused: the draft is returned unchanged.
    * @param {string} id
    * @param {string} authorUserId
    * @param {import('./draft.entity.js').DraftTimeSlot} slot
+   * @param {number} [maxPerDay]
    * @returns {import('./draft.entity.js').Draft | null}
    */
-  static toggleTimeSlot(id, authorUserId, slot) {
+  static toggleTimeSlot(id, authorUserId, slot, maxPerDay = config.maxSlotsPerDay) {
     const draft = this.getDraft(id, authorUserId);
     if (!draft) return null;
 
     const exists = draft.timeSlots.some(
       (s) => s.date === slot.date && s.start === slot.start && s.end === slot.end
     );
+    if (!exists) {
+      const countForDate = draft.timeSlots.filter((s) => s.date === slot.date).length;
+      if (countForDate >= maxPerDay) return draft;
+    }
     const timeSlots = exists
       ? draft.timeSlots.filter(
           (s) => !(s.date === slot.date && s.start === slot.start && s.end === slot.end)

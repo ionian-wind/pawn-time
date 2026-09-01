@@ -2,6 +2,7 @@ import { RichMessageBuilder, RichTextBuilder, richMessageButton } from 'node-tel
 import { formatDisplayDate } from './slots.js';
 import { calendarGrid } from './calendar.js';
 import { getTranslator } from './i18n.js';
+import { config } from '../config/index.js';
 import {
   dayCallback,
   slotCallback,
@@ -10,9 +11,16 @@ import {
   navCallback,
   monthCallback,
   backCallback,
+  stageCallback,
+  voteConfirmCallback,
+  voteCancelCallback,
   noopCallback,
+  editDraftCallback,
+  deleteDraftCallback,
+  removeDraftCallback,
   STEP,
 } from './callback-data.js';
+import { VoteService } from '../domains/vote/vote.service.js';
 
 /**
  * Rich fragments used inside the HTML message bodies. The bot uses classic
@@ -39,13 +47,15 @@ function startOfTodayIso() {
  * @param {import('../domains/draft/draft.entity.js').Draft} draft
  * @param {{ year: number, monthIndex: number }} calendar - visible month
  * @param {string} [locale]
+ * @param maxDays
  * @returns {{ rich_message: import('node-telegram-bot-api').InputRichMessage }}
  */
-export function buildDaysMessage(draft, calendar, locale = 'en') {
+export function buildDaysMessage(draft, calendar, locale = 'en', maxDays = config.maxScheduleDays) {
   const t = getTranslator(locale);
   const selected = new Set(draft.selectedDates);
   const grid = calendarGrid(calendar, locale);
   const today = startOfTodayIso();
+  const atLimit = selected.size >= maxDays;
 
   const title = new RichTextBuilder();
   if (draft.title) title.bold(draft.title);
@@ -66,8 +76,9 @@ export function buildDaysMessage(draft, calendar, locale = 'en') {
     builder.buttons(
       week.map((cell) => {
         if (!cell.isoDate) return richMessageButton('\u00A0', { disabled: {} });
-        const disabled = cell.isoDate < today; // past dates are not schedulable
+        const past = cell.isoDate < today; // past dates are not schedulable
         const active = selected.has(cell.isoDate);
+        const disabled = past || (atLimit && !active); // no more picks once at the day limit
         const options = disabled ? { disabled: {} } : { callback_data: dayCallback(cell.isoDate) };
         return richMessageButton(`${active ? '\u2611 ' : ''}${cell.day}`, options);
       })
@@ -77,13 +88,16 @@ export function buildDaysMessage(draft, calendar, locale = 'en') {
   builder.buttons([
     richMessageButton(`${t('ok')} \u2713`, { callback_data: okCallback(STEP.DAYS) }),
     richMessageButton(t('reset'), { callback_data: resetCallback(STEP.DAYS) }),
+    richMessageButton(`${t('remove')} \u2715`, { callback_data: removeDraftCallback() }),
   ]);
 
   const selectedLabel =
     selected.size === 0
       ? t('none')
       : [...selected].map((d) => formatDisplayDate(d, locale)).join(', ');
-  builder.paragraph(`${t('pickDays')}\n${t('selected')} ${selectedLabel}`);
+  builder.paragraph(
+    `${t('pickDays')}\n${t('selectedInMax', { n: selected.size, max: maxDays })} ${selectedLabel}`
+  );
 
   return { rich_message: builder.build() };
 }
@@ -136,9 +150,16 @@ function flattenRichText(text) {
  * @param {number} dayIndex - index into draft.selectedDates
  * @param {Array<{ start: string, end: string }>} timeSlots
  * @param {string} [locale]
+ * @param maxPerDay
  * @returns {{ rich_message: import('node-telegram-bot-api').InputRichMessage }}
  */
-export function buildTimesMessage(draft, dayIndex, timeSlots, locale = 'en') {
+export function buildTimesMessage(
+  draft,
+  dayIndex,
+  timeSlots,
+  locale = 'en',
+  maxPerDay = config.maxSlotsPerDay
+) {
   const t = getTranslator(locale);
   const dates = draft.selectedDates;
   const date = dates[dayIndex] ?? dates[0];
@@ -150,6 +171,7 @@ export function buildTimesMessage(draft, dayIndex, timeSlots, locale = 'en') {
   const chosen = new Set(
     draft.timeSlots.filter((slot) => slot.date === date).map((slot) => slot.start)
   );
+  const atLimit = chosen.size >= maxPerDay;
 
   const builder = new RichMessageBuilder().heading(
     new RichTextBuilder().bold(formatDisplayDate(date, locale)),
@@ -173,8 +195,12 @@ export function buildTimesMessage(draft, dayIndex, timeSlots, locale = 'en') {
     builder.buttons(
       timeSlots.slice(i, i + 3).map((slot) => {
         const active = chosen.has(slot.start);
+        const disabled = atLimit && !active; // no more picks once at this day's slot limit
+        const options = disabled
+          ? { disabled: {} }
+          : { callback_data: slotCallback(date, slot.start) };
         const label = `${active ? '\u25A3' : '\u25A2'} ${slot.start}`;
-        return richMessageButton(label, { callback_data: slotCallback(date, slot.start) });
+        return richMessageButton(label, options);
       })
     );
   }
@@ -183,32 +209,145 @@ export function buildTimesMessage(draft, dayIndex, timeSlots, locale = 'en') {
     richMessageButton(`${t('back')} \u2190`, { callback_data: backCallback() }),
     richMessageButton(`${t('ok')} \u2713`, { callback_data: okCallback(STEP.TIMES) }),
     richMessageButton(t('reset'), { callback_data: resetCallback(STEP.TIMES) }),
+    richMessageButton(`${t('remove')} \u2715`, { callback_data: removeDraftCallback() }),
   ]);
 
   const selectedLabel = chosen.size === 0 ? t('none') : [...chosen].sort().join(', ');
-  builder.paragraph(`${t('selected')} ${selectedLabel}`);
+  builder.paragraph(`${t('selectedInMax', { n: chosen.size, max: maxPerDay })} ${selectedLabel}`);
 
   return { rich_message: builder.build() };
 }
 
 /**
- * Builds the final "published" announcement for a poll.
- * @param {import('../domains/poll/poll.entity.js').PollWithStats} poll
+ * Builds the live poll screen as a RICH MESSAGE.
+ *
+ * In normal mode each option row shows its live Yes/Maybe/No counts and a
+ * single "Vote" button. Pressing "Vote" switches the viewer into a per-user
+ * staging panel (`staged` is a Map of option id -> response): each row then
+ * offers Yes/Maybe/No choice buttons plus global Confirm / Cancel buttons
+ * below. Staged choices are never applied until Confirm is pressed; choosing
+ * the same response again removes it from the staged set.
+ * @param {ReturnType<import('./poll-view.js').buildPollView>} view
  * @param {string} [locale]
- * @returns {{ text: string, reply_markup: { inline_keyboard: Array<Array<Object>> } }}
+ * @param {Map<string, import('../domains/vote/vote.entity.js').VoteResponse> | null} [staged]
+ * @returns {{ rich_message: import('node-telegram-bot-api').InputRichMessage }}
  */
-export function buildPublishedMessage(poll, locale = 'en') {
+export function buildPollMessage(view, locale = 'en', staged = null) {
   const t = getTranslator(locale);
-  const options = poll.options
-    .map(
-      (opt) =>
-        `\u2022 ${formatDisplayDate(opt.date, locale)} ${opt.startTime} \u2013 ${opt.endTime}`
-    )
-    .join('\n');
-  return {
-    text: `<b>${esc(poll.title)}</b> ${t('isLive')}\n\n${options}\n\n${t('share')}`,
-    reply_markup: { inline_keyboard: [] },
-  };
+  const { poll, rows } = view;
+  const open = VoteService.canVote(poll);
+
+  const builder = new RichMessageBuilder().paragraph(
+    new RichTextBuilder().bold(poll.title).plain(` ${t('isLive')}`)
+  );
+
+  if (staged) builder.paragraph(t('stagedHint'));
+
+  let lastDate = null;
+  for (const row of rows) {
+    if (row.date !== lastDate) {
+      builder.paragraph(new RichTextBuilder().bold(formatDisplayDate(row.date, locale)));
+      lastDate = row.date;
+    }
+
+    const label = `${row.start}\u2013${row.end}`;
+    const counts = `\u2713${row.counts.yes}  \u2717${row.counts.no}`;
+
+    if (staged) {
+      const choice = choiceFor(staged, row);
+      builder.buttons([
+        richMessageButton(`${label}  ${counts}`, { disabled: {} }),
+        richMessageButton('\u2713', {
+          callback_data: stageCallback(poll.id, row.index, 'yes'),
+          ...(choice === 'yes' ? { style: 'primary' } : {}),
+        }),
+        richMessageButton('\u2717', {
+          callback_data: stageCallback(poll.id, row.index, 'no'),
+          ...(choice === 'no' ? { style: 'primary' } : {}),
+        }),
+      ]);
+    } else if (row.mine || !open) {
+      // already voted this row (or the poll is closed): totals only
+      builder.buttons([richMessageButton(`${label}  ${counts}`, { disabled: {} })]);
+    } else {
+      builder.buttons([
+        richMessageButton(`${label}  ${counts}`, { disabled: {} }),
+        richMessageButton('\u2713', { callback_data: stageCallback(poll.id, row.index, 'yes') }),
+        richMessageButton('\u2717', { callback_data: stageCallback(poll.id, row.index, 'no') }),
+      ]);
+    }
+  }
+
+  if (staged) {
+    builder.buttons([
+      richMessageButton(`${t('confirm')} \u2713`, {
+        callback_data: voteConfirmCallback(poll.id),
+      }),
+      richMessageButton(`${t('cancel')} \u2717`, { callback_data: voteCancelCallback(poll.id) }),
+    ]);
+  }
+
+  builder.paragraph(`${t('participants')} ${view.participantCount}`);
+
+  return { rich_message: builder.build() };
+}
+
+/**
+ * The uniform staged response for a row, or undefined when not all slots of the
+ * row share one staged response.
+ * @param {Map<string, import('../domains/vote/vote.entity.js').VoteResponse>} staged
+ * @param {ReturnType<import('./poll-view.js').buildPollView>['rows'][number]} row
+ * @returns {import('../domains/vote/vote.entity.js').VoteResponse | undefined}
+ */
+function choiceFor(staged, row) {
+  let choice;
+  for (const id of row.ids) {
+    const current = staged.get(id);
+    if (current === undefined) return undefined;
+    if (choice === undefined) choice = current;
+    else if (choice !== current) return undefined;
+  }
+  return choice;
+}
+
+/**
+ * Builds the /drafts list as a RICH MESSAGE: one block per draft with its
+ * title, size summary and created date, plus "Continue" / "Delete" buttons.
+ * @param {Array<import('../domains/draft/draft.entity.js').Draft>} drafts - most recent first
+ * @param {string} [locale]
+ * @returns {{ rich_message: import('node-telegram-bot-api').InputRichMessage }}
+ */
+export function buildDraftsMessage(drafts, locale = 'en') {
+  const t = getTranslator(locale);
+  const builder = new RichMessageBuilder().paragraph(new RichTextBuilder().bold(t('draftsTitle')));
+
+  if (drafts.length === 0) {
+    builder.paragraph(t('noDrafts'));
+    return { rich_message: builder.build() };
+  }
+
+  for (const draft of drafts) {
+    const title = draft.title || t('untitled');
+    const summary = `${t('daysShort', { n: draft.selectedDates.length })} \u00B7 ${t('slotsShort', {
+      n: draft.timeSlots.length,
+    })}`;
+    builder.paragraph(new RichTextBuilder().bold(title).plain(` \u2014 ${summary}`));
+
+    if (draft.createdAt) {
+      builder.paragraph(`${t('createdOn', { date: String(draft.createdAt).slice(0, 10) })}`);
+    }
+
+    builder.buttons([
+      richMessageButton(`${t('continue')} \u25B6`, {
+        callback_data: editDraftCallback(draft.id),
+      }),
+      richMessageButton(`${t('deleteDraft')} \u2715`, {
+        callback_data: deleteDraftCallback(draft.id),
+      }),
+    ]);
+  }
+
+  return { rich_message: builder.build() };
 }
 
 /**

@@ -1,7 +1,30 @@
 import { Bot } from 'node-telegram-bot-api';
 import { FlowManager } from './flow.js';
-import { getTranslator } from './i18n.js';
+import { getTranslator, normalizeLocale } from './i18n.js';
 import { logger } from './logger.js';
+import { decodeCallback } from './callback-data.js';
+import { buildPollView } from './poll-view.js';
+import { buildPollMessage, buildDraftsMessage } from './ui.js';
+import { PollService } from '../domains/poll/poll.service.js';
+import { VoteService } from '../domains/vote/vote.service.js';
+import { DraftService } from '../domains/draft/draft.service.js';
+import { UserRepository } from '../domains/user/user.repository.js';
+import { InboxRepository, OutboxRepository } from '../domains/message/message.pipeline.js';
+
+/**
+ * Tracks the chat + message id of every published poll so that votes can be
+ * applied by editing the poll message in place.
+ * @type {Map<string, { chatId: string, messageId: number }>}
+ */
+const pollMessages = new Map();
+
+/**
+ * Per-viewer staged votes for each poll: key is `${sessionId}:${pollId}`, value
+ * maps poll option id -> response. Nothing here is applied to the database
+ * until the viewer presses Confirm.
+ * @type {Map<string, Map<string, import('../domains/vote/vote.entity.js').VoteResponse>>}
+ */
+const pendingVotes = new Map();
 
 /**
  * Wires a Telegram `Bot` to the `/new` draft flow.
@@ -26,7 +49,69 @@ export function createBot(token, options = {}) {
   const bot = new Bot(token, options);
   const flow = new FlowManager();
 
-  withApiLogging(bot);
+  // The unfiltered Telegram API client. Outbound sends go through the outbox
+  // journal (so nothing is lost across a restart); `flushOutbox` uses this raw
+  // request to drain the journal without re-recording.
+  const rawApiRequest = bot.api.request.bind(bot.api);
+
+  withApiLogging(bot, rawApiRequest);
+
+  // The inbox wrapper: persist every update before handling so a crash mid-
+  // handling never loses an event, and dedupe by update_id (Telegram redelivery).
+  const rawHandleUpdate = bot.handleUpdate.bind(bot);
+  bot.handleUpdate = async (update) => {
+    if (!update || typeof update.update_id !== 'number') {
+      await rawHandleUpdate(update);
+      return;
+    }
+    const recorded = InboxRepository.record(update.update_id, update);
+    if (!recorded) return;
+    try {
+      await rawHandleUpdate(update);
+    } finally {
+      InboxRepository.markProcessed(recorded.id);
+    }
+  };
+
+  /**
+   * Re-dispatches any inbound updates that were persisted but never finished
+   * handling (e.g. the process died mid-handling). Returns how many were
+   * replayed.
+   * @returns {Promise<number>}
+   */
+  bot.replayInbox = async () => {
+    const pending = InboxRepository.listUnprocessed();
+    for (const message of pending) {
+      try {
+        await rawHandleUpdate(message.payload);
+      } finally {
+        InboxRepository.markProcessed(message.id);
+      }
+    }
+    return pending.length;
+  };
+
+  /**
+   * Drains any outbound messages left in the outbox from a previous run (or
+   * enqueued programmatically), dispatching them to the real Telegram API.
+   * Returns how many pending rows were processed.
+   * @param {number} [limit]
+   * @returns {Promise<number>}
+   */
+  bot.flushOutbox = async (limit = 100) => {
+    const pending = OutboxRepository.listPending(limit);
+    for (const message of pending) {
+      try {
+        await rawApiRequest(message.method, message.payload);
+        OutboxRepository.markSent(message.id);
+      } catch (err) {
+        OutboxRepository.markFailed(message.id, describeApiError(err), {
+          giveUp: !isRetryableApiError(err),
+        });
+      }
+    }
+    return pending.length;
+  };
 
   bot.use(async (ctx, next) => {
     logIncoming(ctx);
@@ -48,13 +133,16 @@ export function createBot(token, options = {}) {
     flow.setMessageId(start.sessionKey, sent.message_id);
   });
 
-  bot.command('cancel', async (ctx) => {
+  bot.command('drafts', async (ctx) => {
     const from = ctx.from;
-    if (from) {
-      flow.clear(String(from.id), from.id);
-      flow.clear(String(ctx.chatId), from.id);
-      if (ctx.reply) await ctx.reply(getTranslator(from.language_code)('draftCancelled'));
-    }
+    if (!from) return;
+    const user = UserRepository.findOrCreateBySession(
+      { name: from.first_name || undefined },
+      String(from.id)
+    );
+    const drafts = DraftService.listDrafts(user.id);
+    const content = buildDraftsMessage(drafts, normalizeLocale(from.language_code));
+    await sendMessage(bot, String(from.id), content);
   });
 
   bot.on('callback_query', async (ctx) => {
@@ -68,7 +156,21 @@ export function createBot(token, options = {}) {
         // ignore answer failures; the update is still processed
       }
     }
+
+    const decoded = decodeCallback(query.data);
+    if (decoded && (await handlePollCallback(bot, decoded, String(from.id), from.language_code)))
+      return;
+    if (decoded && (await handleDraftsCallback(bot, flow, ctx, decoded))) return;
+
     const result = flow.onCallback(String(ctx.chatId), from.id, query.data);
+    if (result?.type === 'removed') {
+      const message = ctx.callbackQuery?.message;
+      if (message?.message_id) {
+        const chatId = String(message.chat?.id ?? ctx.chatId);
+        await editMessage(bot, chatId, message.message_id, result.content);
+      }
+      return;
+    }
     if (result) await present(bot, flow, result);
   });
 
@@ -87,7 +189,12 @@ async function present(bot, flow, result) {
 
   if (result.published) {
     const target = result.publishChatId ?? sess?.chatId;
-    if (target) await sendMessage(bot, target, result.content);
+    if (target) {
+      const sent = await sendMessage(bot, target, result.content);
+      if (result.poll?.id && sent?.message_id) {
+        pollMessages.set(result.poll.id, { chatId: String(target), messageId: sent.message_id });
+      }
+    }
     return;
   }
 
@@ -97,6 +204,183 @@ async function present(bot, flow, result) {
     const sent = await sendMessage(bot, sess.chatId, result.content);
     flow.setMessageId(result.sessionKey, sent.message_id);
   }
+}
+
+/**
+ * Routes a decoded callback that belongs to the poll voting panel. Returns true
+ * when the callback was handled (and should not reach the /new flow).
+ * @param {import('node-telegram-bot-api').Bot} bot
+ * @param {import('./callback-data.js').CallbackData} decoded
+ * @param {string} sessionId - the voter's telegram user id
+ * @param {string} [languageCode]
+ * @returns {Promise<boolean>}
+ */
+async function handlePollCallback(bot, decoded, sessionId, languageCode) {
+  switch (decoded.type) {
+    case 'stage':
+      await stageVote(
+        bot,
+        decoded.pollId,
+        decoded.optionIndex,
+        decoded.response,
+        sessionId,
+        languageCode
+      );
+      return true;
+    case 'vconfirm':
+      await confirmVotes(bot, decoded.pollId, sessionId, languageCode);
+      return true;
+    case 'vcancel':
+      await cancelStaging(bot, decoded.pollId, sessionId, languageCode);
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Handles the "Continue" / "Delete" buttons of the /drafts list. Returns true
+ * when the callback was handled (and should not reach the draft flow).
+ * @param {import('node-telegram-bot-api').Bot} bot
+ * @param {FlowManager} flow
+ * @param {import('node-telegram-bot-api').Context} ctx
+ * @param {import('./callback-data.js').CallbackData} decoded
+ * @returns {Promise<boolean>}
+ */
+async function handleDraftsCallback(bot, flow, ctx, decoded) {
+  if (decoded.type !== 'edit' && decoded.type !== 'del') return false;
+
+  const from = ctx.from;
+  if (!from) return true;
+  const user = UserRepository.findOrCreateBySession(
+    { name: from.first_name || undefined },
+    String(from.id)
+  );
+  const message = ctx.callbackQuery?.message;
+  const chatId = String(message?.chat?.id ?? from.id);
+
+  if (decoded.type === 'edit') {
+    const draft = DraftService.getDraft(decoded.draftId, user.id);
+    if (!draft) {
+      // already deleted elsewhere: refresh the list in place
+      const content = buildDraftsMessage(
+        DraftService.listDrafts(user.id),
+        normalizeLocale(from.language_code)
+      );
+      if (message?.message_id) await editMessage(bot, chatId, message.message_id, content);
+      return true;
+    }
+    flow.clear(chatId, from.id);
+    const resumed = flow.resume(chatId, null, from, draft);
+    if (!resumed) return true;
+    if (message?.message_id) flow.setMessageId(resumed.sessionKey, message.message_id);
+    await present(bot, flow, resumed);
+    return true;
+  }
+
+  DraftService.deleteDraft(decoded.draftId, user.id);
+  const content = buildDraftsMessage(
+    DraftService.listDrafts(user.id),
+    normalizeLocale(from.language_code)
+  );
+  if (message?.message_id) await editMessage(bot, chatId, message.message_id, content);
+  return true;
+}
+
+/**
+ * Stages (or unstages) a response for one grouped row of consecutive slots
+ * without applying it. Choosing the same response again removes it from the
+ * staged set (for every slot of the row).
+ * @param {import('node-telegram-bot-api').Bot} bot
+ * @param {string} pollId
+ * @param {number} rowIndex - index into the grouped poll view rows
+ * @param {import('../domains/vote/vote.entity.js').VoteResponse} response
+ * @param {string} sessionId
+ * @param {string} [languageCode]
+ * @returns {Promise<void>}
+ */
+async function stageVote(bot, pollId, rowIndex, response, sessionId, languageCode) {
+  const poll = PollService.getPollWithStats(pollId);
+  if (!poll || !VoteService.canVote(poll)) return;
+  const row = buildPollView(poll, sessionId).rows[rowIndex];
+  if (!row) return;
+
+  const key = stagedKey(sessionId, pollId);
+  const staged = pendingVotes.get(key) ?? new Map();
+  for (const optionId of row.ids) {
+    if (staged.get(optionId) === response) staged.delete(optionId);
+    else staged.set(optionId, response);
+  }
+  pendingVotes.set(key, staged);
+  await renderPoll(bot, pollId, sessionId, languageCode, staged);
+}
+
+/**
+ * Applies every staged vote for the viewer at once and renders the poll back in
+ * normal mode. This is the only place votes are written to the database.
+ * @param {import('node-telegram-bot-api').Bot} bot
+ * @param {string} pollId
+ * @param {string} sessionId
+ * @param {string} [languageCode]
+ * @returns {Promise<void>}
+ */
+async function confirmVotes(bot, pollId, sessionId, languageCode) {
+  const poll = PollService.getPollWithStats(pollId);
+  if (!poll) return;
+  const key = stagedKey(sessionId, pollId);
+  const staged = pendingVotes.get(key);
+  pendingVotes.delete(key);
+
+  if (staged && VoteService.canVote(poll)) {
+    for (const [optionId, response] of staged) {
+      VoteService.castVote(pollId, sessionId, optionId, response);
+    }
+  }
+
+  await renderPoll(bot, pollId, sessionId, languageCode, null);
+}
+
+/**
+ * Discards the viewer's staged votes without applying them and renders the poll
+ * back in normal mode.
+ * @param {import('node-telegram-bot-api').Bot} bot
+ * @param {string} pollId
+ * @param {string} sessionId
+ * @param {string} [languageCode]
+ * @returns {Promise<void>}
+ */
+async function cancelStaging(bot, pollId, sessionId, languageCode) {
+  pendingVotes.delete(stagedKey(sessionId, pollId));
+  await renderPoll(bot, pollId, sessionId, languageCode, null);
+}
+
+/**
+ * Re-renders a published poll message in place, from the viewer's perspective.
+ * @param {import('node-telegram-bot-api').Bot} bot
+ * @param {string} pollId
+ * @param {string} sessionId
+ * @param {string | undefined} languageCode
+ * @param {Map<string, import('../domains/vote/vote.entity.js').VoteResponse> | null} staged
+ * @returns {Promise<void>}
+ */
+async function renderPoll(bot, pollId, sessionId, languageCode, staged) {
+  const poll = PollService.getPollWithStats(pollId);
+  const msg = pollMessages.get(pollId);
+  if (!poll || !msg) return;
+  const content = buildPollMessage(
+    buildPollView(poll, sessionId),
+    normalizeLocale(languageCode),
+    staged
+  );
+  await editMessage(bot, msg.chatId, msg.messageId, content);
+}
+
+/**
+ * @param {string} sessionId @param {string} pollId
+ * @param pollId
+ */
+function stagedKey(sessionId, pollId) {
+  return `${sessionId}:${pollId}`;
 }
 
 /**
@@ -157,19 +441,46 @@ function isPrivate(chat) {
 }
 
 /**
- * Wraps `bot.api.request` so every Telegram API call and its outcome is logged.
- * The wrapper rethrows errors so normal error handling is unaffected.
- * @param {import('node-telegram-bot-api').Bot} bot
+ * Outbound methods that are part of Telegram's control plane rather than
+ * user-visible messages: they are not recorded in the outbox.
+ * @type {Set<string>}
  */
-function withApiLogging(bot) {
-  const apiRequest = bot.api.request.bind(bot.api);
+const OUTBOX_EXCLUDED_METHODS = new Set([
+  'getUpdates',
+  'getMe',
+  'deleteWebhook',
+  'setWebhook',
+  'setMyCommands',
+  'deleteMyCommands',
+  'getMyCommands',
+  'answerCallbackQuery',
+  'close',
+  'logout',
+]);
+
+/**
+ * Wraps `bot.api.request` so every Telegram API call is logged and (for
+ * user-visible sends) journaled to the outbox before dispatch. The wrapper
+ * rethrows errors so normal error handling is unaffected; a successful send is
+ * marked `sent`, a failed one `failed` (or left pending for retry).
+ * @param {import('node-telegram-bot-api').Bot} bot
+ * @param {(method: string, params?: object, signal?: AbortSignal) => Promise<*>} rawRequest
+ */
+function withApiLogging(bot, rawRequest) {
   bot.api.request = async (method, params, signal) => {
+    const journal = journalOutbound(method, params);
     const started = Date.now();
     try {
-      const response = await apiRequest(method, params, signal);
+      const response = await rawRequest(method, params, signal);
+      if (journal) OutboxRepository.markSent(journal.id);
       logger.info('telegram api', { method, ms: Date.now() - started });
       return response;
     } catch (err) {
+      if (journal) {
+        OutboxRepository.markFailed(journal.id, describeApiError(err), {
+          giveUp: !isRetryableApiError(err),
+        });
+      }
       logger.error('telegram api error', {
         method,
         ms: Date.now() - started,
@@ -181,6 +492,44 @@ function withApiLogging(bot) {
       throw err;
     }
   };
+}
+
+/**
+ * Records an outbound API call in the outbox when it is a user-visible message
+ * (a send or edit carrying a chat_id). Control-plane calls and anything without
+ * a chat are passed through.
+ * @param {string} method
+ * @param {object | undefined} params
+ * @returns {import('../domains/message/message.entity.js').OutgoingMessage | null}
+ */
+function journalOutbound(method, params) {
+  if (OUTBOX_EXCLUDED_METHODS.has(method)) return null;
+  const chatId = params?.chat_id;
+  if (chatId == null) return null;
+  return OutboxRepository.record(String(chatId), method, params);
+}
+
+/**
+ * Human-readable error text for a recorded API failure.
+ * @param {*} err
+ * @returns {string}
+ */
+function describeApiError(err) {
+  if (err?.description) return `${err.description} (${err?.errorCode ?? 'no code'})`;
+  return err?.message ?? String(err);
+}
+
+/**
+ * A request is retryable when it failed before reaching Telegram (no HTTP
+ * status) or with a server-side status (5xx); permanent 4xx rejection is a
+ * definite failure.
+ * @param {*} err
+ * @returns {boolean}
+ */
+function isRetryableApiError(err) {
+  const code = err?.errorCode ?? err?.response?.status;
+  if (code == null) return true;
+  return code >= 500;
 }
 
 /**

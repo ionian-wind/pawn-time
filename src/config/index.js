@@ -71,4 +71,20 @@ export const config = {
   get logLevel() {
     return envString('LOG_LEVEL', 'info');
   },
+
+  /**
+   * Maximum number of days an author may select in one draft.
+   * @type {number}
+   */
+  get maxScheduleDays() {
+    return envInt('MAX_SCHEDULE_DAYS', 4);
+  },
+
+  /**
+   * Maximum number of 30-minute slots an author may select per day.
+   * @type {number}
+   */
+  get maxSlotsPerDay() {
+    return envInt('MAX_SLOTS_PER_DAY', 6);
+  },
 };

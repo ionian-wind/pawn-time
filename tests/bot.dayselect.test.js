@@ -2,6 +2,10 @@ import { createBot } from '../src/bot/index.js';
 
 const okBody = (result) => JSON.stringify({ ok: true, result });
 
+/**
+ *
+ * @param log
+ */
 function makeFetch(log) {
   return async (url, init = {}) => {
     const params =
@@ -22,8 +26,9 @@ function makeFetch(log) {
   };
 }
 
+let updateSeq = 10_000;
+
 const update = {
-  update_id: 1,
   message: {
     message_id: 1,
     from: { id: 111, is_bot: false, first_name: 'Alice', language_code: 'en' },
@@ -32,8 +37,16 @@ const update = {
   },
 };
 
+/**
+ *
+ * @param text
+ */
 function withText(text) {
-  return { ...update, update_id: update.update_id + 1, message: { ...update.message, text } };
+  return {
+    ...update,
+    update_id: ++updateSeq,
+    message: { ...update.message, text },
+  };
 }
 
 describe('day select rich message', () => {
@@ -77,7 +90,7 @@ describe('day select rich message', () => {
 
     await bot.handleUpdate(withText('/new Team sync'));
     await bot.handleUpdate({
-      update_id: 99,
+      update_id: ++updateSeq,
       callback_query: {
         id: 'c1',
         from: { id: 111, is_bot: false, first_name: 'Alice' },
@@ -90,5 +103,34 @@ describe('day select rich message', () => {
     const edit = log.find((r) => r.method === 'editMessageText');
     expect(edit).toBeTruthy();
     expect(edit.body.rich_message).toBeTruthy();
+  });
+
+  it('shows the Remove button on the days screen and deletes the draft in place', async () => {
+    const log = [];
+    const bot = createBot('123:fake', { fetch: makeFetch(log), maxRetries: 0 });
+
+    await bot.handleUpdate(withText('/new Team sync'));
+
+    const send = log.find((r) => r.method === 'sendRichMessage');
+    const buttons = send.body.rich_message.blocks
+      .flatMap((b) => (b.type === 'buttons' ? b.buttons : []))
+      .map((b) => [b.text, String(b.callback_data)]);
+    expect(buttons).toContainEqual(['Remove \u2715', 'remove:']);
+
+    await bot.handleUpdate({
+      update_id: ++updateSeq,
+      callback_query: {
+        id: 'c1',
+        from: { id: 111, is_bot: false, first_name: 'Alice' },
+        chat_instance: 'ci',
+        data: 'remove:',
+        message: { message_id: 101, chat: { id: 111, type: 'private' }, date: 1_700_000_000 },
+      },
+    });
+
+    const edit = log.find((r) => r.method === 'editMessageText');
+    expect(edit).toBeTruthy();
+    expect(edit.body.text).toContain('Draft removed.');
+    expect(edit.body.rich_message).toBeUndefined();
   });
 });

@@ -6,10 +6,19 @@ import { richButtons, richTexts } from '../src/bot/ui.js';
 import { currentCalendar, shiftMonth, calendarGrid } from '../src/bot/calendar.js';
 import { DraftService } from '../src/index.js';
 
+/**
+ *
+ * @param id
+ * @param first_name
+ */
 function fromUser(id, first_name = 'Alice') {
   return { id, first_name, last_name: '' };
 }
 
+/**
+ *
+ * @param content
+ */
 function allButtons(content) {
   if (content.rich_message) {
     return richButtons(content).filter((b) => typeof b.callback_data === 'string');
@@ -17,18 +26,36 @@ function allButtons(content) {
   return (content.reply_markup?.inline_keyboard ?? []).flat();
 }
 
+/**
+ *
+ * @param content
+ */
 function dayButtons(content) {
   return allButtons(content).filter((btn) => decodeCallback(btn.callback_data)?.type === 'day');
 }
 
+/**
+ *
+ * @param content
+ * @param predicate
+ */
 function buttonWith(content, predicate) {
   return allButtons(content).find((btn) => predicate(decodeCallback(btn.callback_data)));
 }
 
+/**
+ *
+ * @param content
+ * @param step
+ */
 function okFor(content, step) {
   return buttonWith(content, (d) => d?.type === 'ok' && d.step === step)?.callback_data;
 }
 
+/**
+ *
+ * @param content
+ */
 function timesCurrentDay(content) {
   // the first text-bearing block of the times screen is the day heading
   return richTexts(content)[0] ?? '';
@@ -150,6 +177,37 @@ describe('Bot /new flow', () => {
     // the previously selected day is still checked on the calendar
     const checked = richButtons(back.content).some((b) => b.text.startsWith('\u2611'));
     expect(checked).toBe(true);
+  });
+
+  it('removes the draft from the days screen and ends the session', () => {
+    const flow = new FlowManager();
+    const alice = fromUser(888);
+    const start = flow.start(String(alice.id), null, alice, 'Remove me');
+    expect(DraftService.getDraft(start.draftId, start.authorId)).not.toBeNull();
+
+    const removed = flow.onCallback('888', 888, 'remove:');
+    expect(removed.type).toBe('removed');
+    expect(removed.published).toBe(false);
+    expect(removed.poll).toBeNull();
+    expect(removed.content.text).toContain('Draft removed.');
+
+    expect(DraftService.getDraft(start.draftId, start.authorId)).toBeNull();
+    expect(flow.getMessage('888:888')).toBeNull();
+  });
+
+  it('removes the draft from the times screen too', () => {
+    const flow = new FlowManager();
+    const alice = fromUser(999);
+    const started = flow.start(String(alice.id), null, alice, 'Times remove');
+    const dayCell = dayButtons(started.content)[0];
+    flow.onCallback('999', 999, dayCell.callback_data);
+    const times = flow.onCallback('999', 999, okFor(started.content, 'days'));
+    expect(timesCurrentDay(times.content)).toBeTruthy();
+
+    const removed = flow.onCallback('999', 999, 'remove:');
+    expect(removed.type).toBe('removed');
+    expect(DraftService.getDraft(started.draftId, started.authorId)).toBeNull();
+    expect(flow.getMessage('999:999')).toBeNull();
   });
 
   it('cannot proceed to times with no days selected', () => {
