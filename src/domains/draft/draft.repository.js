@@ -1,4 +1,5 @@
 import { BaseRepository } from '../../db/base-repository.js';
+import { getDatabase } from '../../db/database.js';
 
 /**
  * Repository for drafts (data access layer).
@@ -42,8 +43,8 @@ export class DraftRepository extends BaseRepository {
 
   /**
    * Rewrites the array fields into their JSON string column representation.
-   * @param {Object} input
-   * @returns {Object}
+   * @param {object} input
+   * @returns {object}
    */
   static #withStoredArrays(input) {
     const stored = { ...input };
@@ -73,6 +74,17 @@ export class DraftRepository extends BaseRepository {
    */
   static findByAuthorAndId(id, authorUserId) {
     return this.findOne('id = ? AND author_user_id = ?', [id, authorUserId]);
+  }
+
+  /**
+   * Deletes every draft owned by the given author.
+   * @param {string} authorUserId
+   * @returns {number} the number of removed drafts
+   */
+  static deleteByAuthor(authorUserId) {
+    return getDatabase()
+      .prepare(`DELETE FROM ${this.TABLE} WHERE author_user_id = ?`)
+      .run(authorUserId).changes;
   }
 
   /**

@@ -126,6 +126,12 @@ describe('/drafts command', () => {
     const buttons = draftButtons({ rich_message: message.body.rich_message });
     expect(buttons.filter((b) => b.callback_data.startsWith('edit:'))).toHaveLength(2);
     expect(buttons.filter((b) => b.callback_data.startsWith('del:'))).toHaveLength(2);
+
+    const allButtons = richButtons({ rich_message: message.body.rich_message }).map((b) => [
+      b.text,
+      String(b.callback_data),
+    ]);
+    expect(allButtons).toContainEqual(['Delete all', 'delall:']);
   });
 
   it('shows a hint when the user has no drafts', async () => {
@@ -192,6 +198,29 @@ describe('/drafts command', () => {
     const draft = DraftService.listDrafts(authorId(111))[0];
     expect(draft.selectedDates).toHaveLength(1);
     expect(afterToggle).toContain('Selected: 1/4');
+  });
+
+  it('deletes all drafts at once and re-renders the empty list in place', async () => {
+    const log = [];
+    const bot = createBot('123:fake', { fetch: makeFetch(log), maxRetries: 0 });
+
+    await bot.handleUpdate(messageUpdate(111, '/new Draft one'));
+    await bot.handleUpdate(messageUpdate(111, '/new Draft two'));
+    await bot.handleUpdate(messageUpdate(111, '/drafts'));
+
+    const messages = [...log].reverse().filter((r) => r.method === 'sendRichMessage');
+    const list = messages[0];
+    const delallButton = richButtons({ rich_message: list.body.rich_message }).find(
+      (b) => String(b.callback_data) === 'delall:'
+    );
+    expect(delallButton).toBeTruthy();
+    await bot.handleUpdate(callbackUpdate(111, String(delallButton.callback_data), 111));
+
+    const edited = lastEdit(log);
+    expect(edited).toBeTruthy();
+    const texts = richTexts({ rich_message: edited.body.rich_message }).join(' ');
+    expect(texts).toContain('You have no drafts yet.');
+    expect(DraftService.listDrafts(authorId(111))).toHaveLength(0);
   });
 
   it('is author-only: another user cannot delete a draft', async () => {

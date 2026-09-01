@@ -140,11 +140,12 @@ describe('UI localization', () => {
     // consecutive 30-minute slots are merged into one range
     expect(richButtons(en).some((b) => b.text.includes('09:00\u201310:00'))).toBe(true);
     expect(richButtons(en).some((b) => b.text.includes('14:00\u201314:30'))).toBe(true);
-    // per-row vote and reject buttons, no global Vote button
+    // per-row vote, maybe and reject buttons, no global Vote button
     const stageButtons = richButtons(en).filter((b) =>
       String(b.callback_data).startsWith('stage:')
     );
-    expect(stageButtons.length).toBe(4);
+    expect(stageButtons.length).toBe(6);
+    expect(stageButtons.filter((b) => String(b.callback_data).endsWith(':m'))).toHaveLength(2);
     expect(richButtons(en).some((b) => String(b.callback_data).startsWith('vstart:'))).toBe(false);
 
     const staged = buildPollMessage(view, 'en', new Map());

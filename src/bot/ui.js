@@ -17,6 +17,7 @@ import {
   noopCallback,
   editDraftCallback,
   deleteDraftCallback,
+  deleteAllDraftsCallback,
   removeDraftCallback,
   STEP,
 } from './callback-data.js';
@@ -219,14 +220,14 @@ export function buildTimesMessage(
 }
 
 /**
- * Builds the live poll screen as a RICH MESSAGE.
- *
- * In normal mode each option row shows its live Yes/Maybe/No counts and a
- * single "Vote" button. Pressing "Vote" switches the viewer into a per-user
- * staging panel (`staged` is a Map of option id -> response): each row then
- * offers Yes/Maybe/No choice buttons plus global Confirm / Cancel buttons
- * below. Staged choices are never applied until Confirm is pressed; choosing
- * the same response again removes it from the staged set.
+ * Builds the live poll screen as a RICH MESSAGE. Each option row shows its live
+ * Yes/Maybe/No counts and one stage button per response. Pressing a stage
+ * button moves the viewer into a per-user staging panel (`staged` is a Map of
+ * option id -> response), highlighting the choice and showing global Confirm /
+ * Cancel buttons below. Staged choices are never applied until Confirm is
+ * pressed; choosing the same response again removes it from the staged set.
+ * Once the viewer has voted a row (or the poll is closed), the row collapses
+ * to its totals and the stage buttons are hidden.
  * @param {ReturnType<import('./poll-view.js').buildPollView>} view
  * @param {string} [locale]
  * @param {Map<string, import('../domains/vote/vote.entity.js').VoteResponse> | null} [staged]
@@ -251,7 +252,7 @@ export function buildPollMessage(view, locale = 'en', staged = null) {
     }
 
     const label = `${row.start}\u2013${row.end}`;
-    const counts = `\u2713${row.counts.yes}  \u2717${row.counts.no}`;
+    const counts = `\u2713${row.counts.yes}  ~${row.counts.maybe}  \u2717${row.counts.no}`;
 
     if (staged) {
       const choice = choiceFor(staged, row);
@@ -261,18 +262,24 @@ export function buildPollMessage(view, locale = 'en', staged = null) {
           callback_data: stageCallback(poll.id, row.index, 'yes'),
           ...(choice === 'yes' ? { style: 'primary' } : {}),
         }),
+        richMessageButton('~', {
+          callback_data: stageCallback(poll.id, row.index, 'maybe'),
+          ...(choice === 'maybe' ? { style: 'primary' } : {}),
+        }),
         richMessageButton('\u2717', {
           callback_data: stageCallback(poll.id, row.index, 'no'),
           ...(choice === 'no' ? { style: 'primary' } : {}),
         }),
       ]);
-    } else if (row.mine || !open) {
-      // already voted this row (or the poll is closed): totals only
+    } else if (row.mine || view.voted || !open) {
+      // already voted (this row or anywhere in the poll, or the poll is closed):
+      // totals only, all buttons disabled
       builder.buttons([richMessageButton(`${label}  ${counts}`, { disabled: {} })]);
     } else {
       builder.buttons([
         richMessageButton(`${label}  ${counts}`, { disabled: {} }),
         richMessageButton('\u2713', { callback_data: stageCallback(poll.id, row.index, 'yes') }),
+        richMessageButton('~', { callback_data: stageCallback(poll.id, row.index, 'maybe') }),
         richMessageButton('\u2717', { callback_data: stageCallback(poll.id, row.index, 'no') }),
       ]);
     }
@@ -325,6 +332,10 @@ export function buildDraftsMessage(drafts, locale = 'en') {
     builder.paragraph(t('noDrafts'));
     return { rich_message: builder.build() };
   }
+
+  builder.buttons([
+    richMessageButton(t('deleteAllDrafts'), { callback_data: deleteAllDraftsCallback() }),
+  ]);
 
   for (const draft of drafts) {
     const title = draft.title || t('untitled');

@@ -248,7 +248,7 @@ async function handlePollCallback(bot, decoded, sessionId, languageCode) {
  * @returns {Promise<boolean>}
  */
 async function handleDraftsCallback(bot, flow, ctx, decoded) {
-  if (decoded.type !== 'edit' && decoded.type !== 'del') return false;
+  if (!['edit', 'del', 'delall'].includes(decoded.type)) return false;
 
   const from = ctx.from;
   if (!from) return true;
@@ -275,6 +275,16 @@ async function handleDraftsCallback(bot, flow, ctx, decoded) {
     if (!resumed) return true;
     if (message?.message_id) flow.setMessageId(resumed.sessionKey, message.message_id);
     await present(bot, flow, resumed);
+    return true;
+  }
+
+  if (decoded.type === 'delall') {
+    DraftService.deleteAllDrafts(user.id);
+    const content = buildDraftsMessage(
+      DraftService.listDrafts(user.id),
+      normalizeLocale(from.language_code)
+    );
+    if (message?.message_id) await editMessage(bot, chatId, message.message_id, content);
     return true;
   }
 

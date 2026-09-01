@@ -14,6 +14,7 @@ export const ACTION = Object.freeze({
   VOTE_CANCEL: 'vcancel',
   EDIT_DRAFT: 'edit',
   DELETE_DRAFT: 'del',
+  DELETE_ALL: 'delall',
   REMOVE: 'remove',
   NOOP: 'noop',
 });
@@ -38,6 +39,7 @@ export const STEP = Object.freeze({
  *           { type: 'vcancel', pollId: string } |
  *           { type: 'edit', draftId: string } |
  *           { type: 'del', draftId: string } |
+ *           { type: 'delall' } |
  *           { type: 'remove' }} CallbackData
  */
 
@@ -170,6 +172,15 @@ export function deleteDraftCallback(draftId) {
 }
 
 /**
+ * Encodes a press of the "Delete all" button for the /drafts list, which
+ * removes every draft of the current user at once.
+ * @returns {string}
+ */
+export function deleteAllDraftsCallback() {
+  return encode(ACTION.DELETE_ALL, '');
+}
+
+/**
  * Encodes a press of the "Remove" button on the draft-creation screens, which
  * deletes the draft and ends the flow session.
  * @returns {string}
@@ -243,6 +254,8 @@ export function decodeCallback(data) {
       return payload ? { type: 'edit', draftId: payload } : null;
     case ACTION.DELETE_DRAFT:
       return payload ? { type: 'del', draftId: payload } : null;
+    case ACTION.DELETE_ALL:
+      return { type: 'delall' };
     case ACTION.REMOVE:
       return { type: 'remove' };
     case ACTION.NOOP:

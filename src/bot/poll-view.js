@@ -16,10 +16,11 @@ import { VoteService } from '../domains/vote/vote.service.js';
  *     start: string | null,
  *     end: string | null,
  *     ids: Array<string>,
- *     counts: { yes: number, no: number }, - distinct participants per response
+ *     counts: { yes: number, maybe: number, no: number }, - distinct participants per response
  *     mine: import('../domains/vote/vote.entity.js').VoteResponse | undefined,
  *     index: number
  *   }>,
+ *   voted: boolean, - whether the viewer has cast any vote in this poll
  *   participantCount: number
  * }}
  */
@@ -49,11 +50,13 @@ export function buildPollView(poll, sessionId) {
       // participant-level totals: one voter counts once per response even when
       // the row spans several consecutive slots
       const voted = new Set();
+      const maybe = new Set();
       const rejected = new Set();
       for (const option of run) {
         const votes = PollOptionRepository.getWithVotes(option.id)?.votes ?? [];
         for (const vote of votes) {
           if (vote.response === 'yes') voted.add(vote.participantId);
+          else if (vote.response === 'maybe') maybe.add(vote.participantId);
           else if (vote.response === 'no') rejected.add(vote.participantId);
         }
       }
@@ -62,7 +65,7 @@ export function buildPollView(poll, sessionId) {
         start: run[0].startTime ?? null,
         end: run[run.length - 1].endTime ?? null,
         ids,
-        counts: { yes: voted.size, no: rejected.size },
+        counts: { yes: voted.size, maybe: maybe.size, no: rejected.size },
         mine: mineFor(myVotes, ids),
         index: index++,
       });
@@ -81,7 +84,12 @@ export function buildPollView(poll, sessionId) {
     flush();
   }
 
-  return { poll, rows, participantCount: poll.participantCount };
+  return {
+    poll,
+    rows,
+    voted: Object.keys(myVotes).length > 0,
+    participantCount: poll.participantCount,
+  };
 }
 
 /**

@@ -152,7 +152,7 @@ describe('poll voting via the bot', () => {
     );
     // no separate global Vote button anymore; vote buttons are per row
     expect(buttonTexts(log, 'sendRichMessage')).not.toContain('Vote \u2714');
-    expect(stageButtonCount(log, 'sendRichMessage')).toBe(2);
+    expect(stageButtonCount(log, 'sendRichMessage')).toBe(3);
   });
 
   it('stages a vote choice for a whole row and applies it only on confirm', async () => {
@@ -174,6 +174,22 @@ describe('poll voting via the bot', () => {
     const after = VoteService.getParticipantVotes(pollId, '999');
     expect(after && Object.values(after)).toEqual(['yes', 'yes']);
     expect(buttonTexts(log, 'editMessageText').some((t) => t.includes('\u27131'))).toBe(true);
+    expect(stageButtonCount(log, 'editMessageText')).toBe(0);
+  });
+
+  it('marks a row as maybe and shows the maybe total after confirm', async () => {
+    const log = [];
+    const bot = createBot('123:fake', { fetch: makeFetch(log), maxRetries: 0 });
+
+    await publishPoll(bot);
+    const pollId = pollIdFromMessage(log, 'sendRichMessage');
+
+    await bot.handleUpdate(callbackUpdate(666, `stage:${pollId}:0:m`, 111));
+    await bot.handleUpdate(callbackUpdate(666, `vok:${pollId}`, 111));
+
+    const after = VoteService.getParticipantVotes(pollId, '666');
+    expect(after && Object.values(after)).toEqual(['maybe', 'maybe']);
+    expect(buttonTexts(log, 'editMessageText').some((t) => t.includes('~1'))).toBe(true);
     expect(stageButtonCount(log, 'editMessageText')).toBe(0);
   });
 
@@ -221,5 +237,34 @@ describe('poll voting via the bot', () => {
     await bot.handleUpdate(callbackUpdate(555, `vok:${pollId}`, 111));
     const after = VoteService.getParticipantVotes(pollId, '555');
     expect(after && Object.values(after)).not.toContain('yes');
+  });
+
+  it('disables every row once the viewer confirmed their votes', async () => {
+    const log = [];
+    const bot = createBot('123:fake', { fetch: makeFetch(log), maxRetries: 0 });
+
+    await bot.handleUpdate(messageUpdate(111, '/new Team sync'));
+    const date = nextMonthFirstDay();
+    await bot.handleUpdate(callbackUpdate(111, 'month:+1', 111));
+    await bot.handleUpdate(callbackUpdate(111, `day:${date}`, 111));
+    await bot.handleUpdate(callbackUpdate(111, 'ok:days', 111));
+    // two non-adjacent slots -> two separate rows (09:00-09:30, 10:00-10:30)
+    await bot.handleUpdate(callbackUpdate(111, `slot:${date}:09:00`, 111));
+    await bot.handleUpdate(callbackUpdate(111, `slot:${date}:10:00`, 111));
+    await bot.handleUpdate(callbackUpdate(111, 'ok:times', 111));
+    const pollId = pollIdFromMessage(log, 'sendRichMessage');
+
+    // two rows are live for an unvoted viewer
+    expect(stageButtonCount(log, 'sendRichMessage')).toBe(6);
+
+    // vote only the first row, then confirm
+    await bot.handleUpdate(callbackUpdate(999, `stage:${pollId}:0:y`, 111));
+    await bot.handleUpdate(callbackUpdate(999, `vok:${pollId}`, 111));
+
+    // all rows are now totals-only: no stage buttons remain anywhere
+    expect(stageButtonCount(log, 'editMessageText')).toBe(0);
+    const texts = buttonTexts(log, 'editMessageText');
+    expect(texts.some((t) => t.includes('09:00\u201309:30'))).toBe(true);
+    expect(texts.some((t) => t.includes('10:00\u201310:30'))).toBe(true);
   });
 });

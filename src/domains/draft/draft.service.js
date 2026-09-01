@@ -200,4 +200,13 @@ export class DraftService {
     if (!draft) return false;
     return DraftRepository.delete(id);
   }
+
+  /**
+   * Deletes every draft owned by the author.
+   * @param {string} authorUserId
+   * @returns {number} the number of removed drafts
+   */
+  static deleteAllDrafts(authorUserId) {
+    return DraftRepository.deleteByAuthor(authorUserId);
+  }
 }
