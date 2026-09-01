@@ -89,8 +89,29 @@ describe('message pipeline', () => {
       error: null,
     });
     expect(rows[0].sent_at).toBeTruthy();
+    expect(rows[0].queued_at).toBeTruthy();
+    expect(rows[0].status_changed_at).toBeTruthy();
+    expect(rows[0].handled_at).toBeTruthy();
+    expect(rows[0].handled_at >= rows[0].queued_at).toBe(true);
     expect(JSON.parse(rows[0].payload)).toMatchObject({ chat_id: 111, text: 'hi' });
     expect(log.map((r) => r.method)).toEqual(['sendMessage']);
+  });
+
+  it('declares outbox timestamps as DATETIME and names them per-domain', () => {
+    const bot = createBot('123:fake', { fetch: makeFetch([]), maxRetries: 0 });
+    expect(bot).toBeDefined();
+
+    const cols = Object.fromEntries(
+      getDatabase()
+        .prepare('PRAGMA table_info(outgoing_messages)')
+        .all()
+        .map((c) => [c.name, c.type])
+    );
+    expect(cols.queued_at).toBe('DATETIME');
+    expect(cols.status_changed_at).toBe('DATETIME');
+    expect(cols.handled_at).toBe('DATETIME');
+    expect(cols.created_at).toBeUndefined();
+    expect(cols.updated_at).toBeUndefined();
   });
 
   it('does not journal control-plane calls', async () => {
@@ -128,11 +149,13 @@ describe('message pipeline', () => {
     expect(rows[0]).toMatchObject({ status: 'pending', attempts: 1 });
     expect(rows[0].error).toContain('Network request failed');
     expect(rows[0].sent_at).toBeNull();
+    expect(rows[0].handled_at).toBeNull();
 
     await bot.flushOutbox();
     rows = outgoingRows();
     expect(rows[0]).toMatchObject({ status: 'sent', attempts: 2, error: null });
     expect(rows[0].sent_at).toBeTruthy();
+    expect(rows[0].handled_at).toBeTruthy();
   });
 
   it('marks a message failed on permanent Telegram errors', async () => {
@@ -148,6 +171,7 @@ describe('message pipeline', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ status: 'failed', attempts: 1 });
     expect(rows[0].error).toContain('Bad Request: text is empty');
+    expect(rows[0].handled_at).toBeTruthy();
   });
 
   it('persists incoming updates and dedupes by update_id', async () => {

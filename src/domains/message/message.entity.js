@@ -16,8 +16,11 @@
 
 /**
  * An outbound Telegram API request queued in the outbox. Pending messages are
- * drained to the real API by the dispatcher; a non-null `sentAt` marks a
- * completed send.
+ * drained to the real API by the dispatcher. `queuedAt` records when the
+ * request was enqueued; `handledAt` records when the dispatcher was done with
+ * it (sent, or permanently failed after exhausting retries); it stays null
+ * while pending or awaiting retry. `statusChangedAt` is bumped whenever the
+ * row's state changes. Handling duration is `handledAt - queuedAt`.
  * @typedef {object} OutgoingMessage
  * @property {string} id
  * @property {string} chatId
@@ -26,8 +29,10 @@
  * @property {OutgoingMessageStatus} status
  * @property {number} attempts
  * @property {string | null} error
- * @property {string} createdAt
+ * @property {string} queuedAt
  * @property {string | null} sentAt
+ * @property {string | null} handledAt
+ * @property {string} statusChangedAt
  */
 
 export {};

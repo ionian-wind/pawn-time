@@ -11,6 +11,9 @@ import { getDatabase, generateId } from './database.js';
  *   - `static COLUMNS`         : array of column configs for create/update
  *   - `static mapRowToEntity(row)` : row -> entity mapper (required)
  *   - `static HAS_UPDATED_AT`  : whether the table has an updated_at column
+ *   - `static CREATED_AT_COLUMN` / `UPDATED_AT_COLUMN` : timestamp column
+ *     names; a repository can override these with domain terms (e.g. the
+ *     outbox uses `queued_at` / `status_changed_at`)
  *
  * Static methods are invoked with `this` bound to the subclass, so each
  * repository operates on its own table without duplicating logic.
@@ -21,6 +24,12 @@ export class BaseRepository {
 
   /** @type {boolean} */
   static HAS_UPDATED_AT = true;
+
+  /** @type {string} */
+  static CREATED_AT_COLUMN = 'created_at';
+
+  /** @type {string} */
+  static UPDATED_AT_COLUMN = 'updated_at';
 
   /**
    * Current timestamp as an ISO string.
@@ -68,10 +77,10 @@ export class BaseRepository {
     /** @type {any[]} */
     const values = [id, ...this.COLUMNS.map((c) => this.valueForCreate(c, input[c.field]))];
 
-    columns.push('created_at');
+    columns.push(this.CREATED_AT_COLUMN);
     values.push(now);
     if (this.HAS_UPDATED_AT) {
-      columns.push('updated_at');
+      columns.push(this.UPDATED_AT_COLUMN);
       values.push(now);
     }
 
@@ -149,7 +158,7 @@ export class BaseRepository {
     if (fields.length === 0) return existing;
 
     if (this.HAS_UPDATED_AT) {
-      fields.push('updated_at = ?');
+      fields.push(`${this.UPDATED_AT_COLUMN} = ?`);
       values.push(this.now());
     }
     values.push(id);

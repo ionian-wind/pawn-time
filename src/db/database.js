@@ -156,12 +156,10 @@ function initializeSchema(database) {
       attempts INTEGER NOT NULL DEFAULT 0,
       error TEXT,
       sent_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      handled_at DATETIME,
+      queued_at DATETIME NOT NULL DEFAULT (datetime('now')),
+      status_changed_at DATETIME NOT NULL DEFAULT (datetime('now'))
     );
-
-    CREATE INDEX IF NOT EXISTS idx_outgoing_pending
-      ON outgoing_messages(status, created_at);
 
     CREATE INDEX IF NOT EXISTS idx_poll_options_poll_id ON poll_options(poll_id);
     CREATE INDEX IF NOT EXISTS idx_votes_option_id ON votes(poll_option_id);
@@ -175,6 +173,8 @@ function initializeSchema(database) {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_participants_poll_id ON participants(poll_id);
     CREATE INDEX IF NOT EXISTS idx_participants_user_id ON participants(user_id);
+    CREATE INDEX IF NOT EXISTS idx_outgoing_pending
+      ON outgoing_messages(status, queued_at);
   `);
 }
 
@@ -260,7 +260,45 @@ function migrateSchema(database) {
     `);
   }
 
-  database.pragma('user_version = 5');
+  // Outbox rows use domain-specific timestamp columns: queued_at (when the
+  // request was enqueued), status_changed_at (last state change), and
+  // handled_at (when the dispatcher finished with the message), all stored as
+  // DATETIME so handling duration can be measured as handled_at - queued_at.
+  // Older databases used generic created_at / updated_at TEXT columns, so
+  // recreate the table in the current shape while preserving data.
+  const outboxCols = database
+    .prepare('PRAGMA table_info(outgoing_messages)')
+    .all()
+    .map((c) => c.name);
+  if (!outboxCols.includes('queued_at')) {
+    const handledAt = outboxCols.includes('handled_at') ? 'handled_at' : 'NULL';
+    database.exec(`
+      DROP INDEX IF EXISTS idx_outgoing_pending;
+      CREATE TABLE outgoing_messages_v6 (
+        id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL,
+        method TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK(status IN ('pending', 'sent', 'failed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        sent_at TEXT,
+        handled_at DATETIME,
+        queued_at DATETIME NOT NULL DEFAULT (datetime('now')),
+        status_changed_at DATETIME NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO outgoing_messages_v6
+        (id, chat_id, method, payload, status, attempts, error, sent_at, handled_at, queued_at, status_changed_at)
+      SELECT
+        id, chat_id, method, payload, status, attempts, error, sent_at, ${handledAt}, created_at, updated_at
+      FROM outgoing_messages;
+      DROP TABLE outgoing_messages;
+      ALTER TABLE outgoing_messages_v6 RENAME TO outgoing_messages;
+    `);
+  }
+
+  database.pragma('user_version = 7');
 }
 
 /**

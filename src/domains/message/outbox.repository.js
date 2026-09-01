@@ -14,6 +14,12 @@ export class OutboxRepository extends BaseRepository {
   /** @type {boolean} */
   static HAS_UPDATED_AT = true;
 
+  /** @type {string} */
+  static CREATED_AT_COLUMN = 'queued_at';
+
+  /** @type {string} */
+  static UPDATED_AT_COLUMN = 'status_changed_at';
+
   /** @type {import('../../db/base-repository.entity.js').ColumnConfig[]} */
   static COLUMNS = [
     { field: 'chatId', column: 'chat_id' },
@@ -57,20 +63,22 @@ export class OutboxRepository extends BaseRepository {
    */
   static markSent(id) {
     const db = getDatabase();
+    const now = new Date().toISOString();
     const result = db
       .prepare(
         `UPDATE ${this.TABLE}
          SET status = 'sent', attempts = attempts + 1,
-             error = NULL, sent_at = ?, updated_at = ?
+             error = NULL, sent_at = ?, handled_at = ?, ${this.UPDATED_AT_COLUMN} = ?
          WHERE id = ?`
       )
-      .run(new Date().toISOString(), new Date().toISOString(), id);
+      .run(now, now, now, id);
     return result.changes > 0;
   }
 
   /**
    * Records a failed attempt and bumps the retry counter. Pass `giveUp = true`
    * to permanently fail the message instead of leaving it pending for retry.
+   * Only a permanent failure marks the message as handled.
    * @param {string} id
    * @param {string} error
    * @param {{ giveUp?: boolean }} [options]
@@ -79,12 +87,13 @@ export class OutboxRepository extends BaseRepository {
   static markFailed(id, error, options = {}) {
     const db = getDatabase();
     const status = options.giveUp ? 'failed' : 'pending';
+    const handledAt = options.giveUp ? new Date().toISOString() : null;
     db.prepare(
       `UPDATE ${this.TABLE}
        SET status = ?, attempts = attempts + 1, error = ?,
-           sent_at = NULL, updated_at = ?
+           sent_at = NULL, handled_at = ?, ${this.UPDATED_AT_COLUMN} = ?
        WHERE id = ?`
-    ).run(status, error, new Date().toISOString(), id);
+    ).run(status, error, handledAt, new Date().toISOString(), id);
     return this.findById(id);
   }
 
@@ -98,8 +107,10 @@ export class OutboxRepository extends BaseRepository {
       status: row.status,
       attempts: row.attempts,
       error: row.error,
-      createdAt: row.created_at,
+      queuedAt: row.queued_at,
       sentAt: row.sent_at,
+      handledAt: row.handled_at,
+      statusChangedAt: row.status_changed_at,
     };
   }
 }
