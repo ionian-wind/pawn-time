@@ -50,11 +50,11 @@ export class Transaction {
   begin() {
     if (this.depth > 0) {
       const name = `savepoint_${++savepointCounter}`;
-      this.db.prepare(`SAVEPOINT "${name}"`).run();
+      this.db.exec(`SAVEPOINT "${name}";`);
       this.depth += 1;
       return name;
     }
-    this.db.prepare('BEGIN').run();
+    this.db.exec('BEGIN;');
     this.depth = 1;
     return null;
   }
@@ -66,11 +66,11 @@ export class Transaction {
   commit(name) {
     if (this.depth <= 0) throw new Error('commit without a transaction');
     if (name) {
-      this.db.prepare(`RELEASE "${name}"`).run();
+      this.db.exec(`RELEASE "${name}";`);
       this.depth -= 1;
       return;
     }
-    this.db.prepare('COMMIT').run();
+    this.db.exec('COMMIT;');
     this.depth = 0;
   }
 
@@ -81,12 +81,12 @@ export class Transaction {
   rollback(name) {
     if (this.depth <= 0) throw new Error('rollback without a transaction');
     if (name) {
-      this.db.prepare(`ROLLBACK TO "${name}"`).run();
-      this.db.prepare(`RELEASE "${name}"`).run();
+      this.db.exec(`ROLLBACK TO "${name}";`);
+      this.db.exec(`RELEASE "${name}";`);
       this.depth -= 1;
       return;
     }
-    this.db.prepare('ROLLBACK').run();
+    this.db.exec('ROLLBACK;');
     this.depth = 0;
   }
 

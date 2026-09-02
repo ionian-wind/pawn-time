@@ -32,9 +32,9 @@ export function getDatabase() {
 
     db = new Database(dbPath);
     if (dbPath !== ':memory:') {
-      db.pragma('journal_mode = WAL');
+      db.exec('PRAGMA journal_mode = WAL;');
     }
-    db.pragma('foreign_keys = ON');
+    db.exec('PRAGMA foreign_keys = ON;');
 
     initializeSchema(db);
   }
@@ -298,7 +298,27 @@ function migrateSchema(database) {
     `);
   }
 
-  database.pragma('user_version = 7');
+  database.exec('PRAGMA user_version = 7;');
+}
+
+/**
+ * Verifies the held database is usable and its WAL is checkpointed out of the
+ * way. Native SQLite crashes hard (segfault) when a corrupt page or a stale
+ * write-ahead log is touched through the sync API, so the bot runs this up
+ * front to turn a native crash into a throw with a readable message. Throws on
+ * failure; callers should treat a throw as fatal.
+ */
+export function verifyDatabase() {
+  if (!db) {
+    getDatabase();
+  }
+  const result = db.pragma('integrity_check', { simple: true });
+  if (result !== 'ok') {
+    throw new Error(`database integrity check failed: ${result}`);
+  }
+  if (dbPath !== ':memory:') {
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+  }
 }
 
 /**

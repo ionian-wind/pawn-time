@@ -12,7 +12,7 @@ export function createSchema(db, entities) {
     statements.push(...entity.toIndexSql());
   }
   for (const sql of statements) {
-    db.prepare(sql).run();
+    db.exec(sql);
   }
 }
 
@@ -23,11 +23,11 @@ export function createSchema(db, entities) {
  * @param {Array<import('./entity.js').EntityDescriptor>} entities
  */
 export function dropSchema(db, entities) {
-  db.pragma('foreign_keys = OFF');
+  db.exec('PRAGMA foreign_keys = OFF;');
   for (const entity of entities) {
-    db.prepare(`DROP TABLE IF EXISTS "${entity.table}"`).run();
+    db.exec(`DROP TABLE IF EXISTS "${entity.table}";`);
   }
-  db.pragma('foreign_keys = ON');
+  db.exec('PRAGMA foreign_keys = ON;');
 }
 
 /**

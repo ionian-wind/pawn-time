@@ -1,7 +1,7 @@
 import { config } from '../config/index.js';
 import { createBot } from './index.js';
 import { registerBotCommands } from './commands.js';
-import { closeDatabase } from '../db/database.js';
+import { closeDatabase, verifyDatabase } from '../db/database.js';
 import { registerShutdown } from '../util/shutdown.js';
 import { logger } from './logger.js';
 
@@ -21,9 +21,10 @@ const FLUSH_INTERVAL_MS = 15_000;
  *
  * `startPolling` is the long-poll pump and only resolves once the bot stops,
  * so it is not awaited: polling runs in the background while the process
- * handles signals. `registerShutdown` closes the database on a clean exit, and
- * both error branches (startup failure and a fatal runtime poll error) close
- * it too.
+ * handles signals. `registerShutdown` owns every exit path - SIGINT/SIGTERM
+ * stop cleanly, while `unhandledRejection` / `uncaughtException` are logged
+ * and then stopped through the same cleanup (exit 1). The startup-failure and
+ * fatal-poll-error branches close the database directly too.
  * @param {object} [options]
  */
 (async (options = {}) => {
@@ -31,7 +32,28 @@ const FLUSH_INTERVAL_MS = 15_000;
   if (!token) {
     throw new Error('TELEGRAM_BOT_TOKEN is not set; cannot start the bot.');
   }
+
+  try {
+    verifyDatabase();
+  } catch (err) {
+    logger.warn('database verification failed at startup (native sqlite may crash next)', {
+      message: err?.message,
+    });
+    throw err;
+  }
+
   const bot = createBot(token, options);
+
+  registerShutdown(
+    () => {
+      bot.stop();
+      closeDatabase();
+    },
+    (kind, err) => {
+      logger.error(kind, { message: err.message, stack: err.stack });
+    }
+  );
+
   await registerBotCommands(bot);
   await registerBotCommands(bot, 'ru');
   await bot.replayInbox();
@@ -43,11 +65,6 @@ const FLUSH_INTERVAL_MS = 15_000;
       .catch((err) => logger.error('outbox flush failed', { message: err?.message }));
   }, FLUSH_INTERVAL_MS);
   flushTimer.unref?.();
-
-  registerShutdown(() => {
-    bot.stop();
-    closeDatabase();
-  });
 
   bot.startPolling().catch((err) => {
     logger.error('polling stopped with an error', { message: err?.message });
