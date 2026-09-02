@@ -3,18 +3,14 @@ import { getTranslator } from './i18n.js';
 /**
  * Telegram slash-command menu entries registered at bot startup. The `command`
  * field intentionally omits the leading slash (Telegram requirement).
- *
- * Both commands are marked `is_ephemeral` so that, in group chats, the command
- * message a user sends is invisible to everyone but the author (draft titles in
- * `/new <title>` stay private).
  * @param {string} locale
- * @returns {Array<{ command: string, description: string, is_ephemeral: boolean }>}
+ * @returns {Array<{ command: string, description: string }>}
  */
 export function buildCommands(locale = 'en') {
   const t = getTranslator(locale);
   return [
-    { command: 'new', description: t('cmdNew'), is_ephemeral: true },
-    { command: 'drafts', description: t('cmdDrafts'), is_ephemeral: true },
+    { command: 'new', description: t('cmdNew') },
+    { command: 'drafts', description: t('cmdDrafts') },
   ];
 }
 
