@@ -20,8 +20,6 @@ const messages = {
     participants: 'Participants:',
     confirm: 'Confirm',
     cancel: 'Cancel',
-    stagedHint: 'Tap a response for each option, then Confirm to apply.',
-    share: 'Share it — everyone can vote <b>Yes</b> / <b>Maybe</b> / <b>No</b>.',
     draftsTitle: 'Your drafts',
     noDrafts: 'You have no drafts yet. Start one with /new <title>.',
     continue: 'Continue',
@@ -50,8 +48,6 @@ const messages = {
     participants: 'Участников:',
     confirm: 'Подтвердить',
     cancel: 'Отмена',
-    stagedHint: 'Выберите ответ для каждого варианта, затем нажмите Подтвердить.',
-    share: 'Поделитесь — каждый сможет проголосовать <b>Да</b> / <b>Может быть</b> / <b>Нет</b>.',
     draftsTitle: 'Ваши черновики',
     noDrafts: 'У вас пока нет черновиков. Создайте командой /new <название>.',
     continue: 'Продолжить',
@@ -95,7 +91,7 @@ export function getTranslator(locale) {
   return (key, vars = {}) => {
     const template = table[key] ?? messages.en[key] ?? key;
     return template.replace(/\{(\w+)\}/g, (_, name) =>
-      Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : `{${name}}`
+      Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : `{${name}}`,
     );
   };
 }

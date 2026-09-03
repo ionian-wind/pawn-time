@@ -264,8 +264,6 @@ export function buildPollMessage(view, locale = 'en', staged = null) {
 
   const builder = new RichMessageBuilder().paragraph(new RichTextBuilder().bold(poll.title));
 
-  if (staged) builder.paragraph(t('stagedHint'));
-
   const isResults = !open || view.voted;
 
   if (isResults) {
