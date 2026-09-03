@@ -1,0 +1,37 @@
+{{{title}}}
+<h3>{{monthTitle}}</h3>
+<table>
+  <tr>
+    <td button="{{prevMonth}}">◀</td>
+    <td button="{{nextMonth}}">▶</td>
+  </tr>
+  <tr>
+  {{#each weekdays}}
+    <td>{{this}}</td>
+  {{/each}}
+  </tr>
+  {{#each weeks}}
+  <tr>
+    {{#each this}}
+      {{#if blank}}
+        <td>&nbsp;</td>
+      {{else}}
+        {{#if cb}}
+          {{#if active}}<td button="{{cb}}"><b>{{day}}</b></td>{{else}}<td button="{{cb}}">{{day}}</td>{{/if}}
+        {{else}}
+          <td>{{day}}</td>
+        {{/if}}
+      {{/if}}
+    {{/each}}
+  </tr>
+  {{/each}}
+</table>
+<table>
+  <tr>
+    {{#if canOk}}<td button="{{okCb}}">{{ok}} ✓</td>{{else}}<td>{{ok}} ✓</td>{{/if}}
+    {{#if canOk}}<td button="{{resetCb}}">{{reset}}</td>{{else}}<td>{{reset}}</td>{{/if}}
+    <td button="{{removeCb}}">{{remove}} ✕</td>
+  </tr>
+</table>
+<i>{{pickDays}}
+{{selectedCaption}}</i>

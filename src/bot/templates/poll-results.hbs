@@ -1,0 +1,20 @@
+<b>{{title}}</b>
+{{#each dateGroups}}
+<table>
+  <tr>
+    <td><b>{{date}}</b></td>
+    <td>✓</td>
+    <td>~</td>
+    <td>✗</td>
+  </tr>
+  {{#each rows}}
+  <tr>
+    <td><b>{{interval}}</b></td>
+    <td>{{{yes}}}</td>
+    <td>{{{maybe}}}</td>
+    <td>{{{no}}}</td>
+  </tr>
+  {{/each}}
+</table>
+{{/each}}
+<i>{{participants}}</i>

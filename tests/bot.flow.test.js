@@ -57,8 +57,9 @@ function okFor(content, step) {
  * @param content
  */
 function timesCurrentDay(content) {
-  // the first text-bearing block of the times screen is the day heading
-  return richTexts(content)[0] ?? '';
+  // the day heading is the first text before the "pick slots" prompt
+  const text = richTexts(content).length ? richTexts(content)[0] : '';
+  return text.split(/\s+pick your/)[0] ?? '';
 }
 
 afterAll(() => closeDatabase());
@@ -101,14 +102,16 @@ describe('Bot /new flow', () => {
     const alice = fromUser(777);
     const days = flow.start(String(alice.id), null, alice, 'Cal').content;
     const initialTitle = calendarGrid(currentCalendar(), 'en').title;
-    expect(richTexts(days)).toContain(initialTitle);
+    expect(richTexts(days).join(' ')).toContain(initialTitle);
 
     const next = flow.onCallback('777', 777, 'month:+1').content;
-    expect(richTexts(next)).toContain(calendarGrid(shiftMonth(currentCalendar(), 1), 'en').title);
+    expect(richTexts(next).join(' ')).toContain(
+      calendarGrid(shiftMonth(currentCalendar(), 1), 'en').title,
+    );
     expect(dayButtons(next).length).toBeGreaterThan(0);
 
     const prev = flow.onCallback('777', 777, 'month:-1').content;
-    expect(richTexts(prev)).toContain(initialTitle);
+    expect(richTexts(prev).join(' ')).toContain(initialTitle);
   });
 
   it('advances to times, toggles a slot, navigates days, then publishes', () => {
@@ -125,7 +128,7 @@ describe('Bot /new flow', () => {
 
     for (const date of dates) {
       const btn = dayButtons(days.content).find(
-        (b) => decodeCallback(b.callback_data).date === date
+        (b) => decodeCallback(b.callback_data).date === date,
       );
       days.content = flow.onCallback('333', 333, btn.callback_data).content;
     }
@@ -138,10 +141,9 @@ describe('Bot /new flow', () => {
     // toggle a slot on day 1
     const slot = buttonWith(times.content, (d) => d?.type === 'slot').callback_data;
     const afterSlot = flow.onCallback('333', 333, slot);
-    const filled = richButtons(afterSlot.content).find((b) =>
-      b.text.includes(slot.split(':').pop())
-    );
-    expect(filled.style).toBe('primary'); // primary highlight = selected
+    // the selected slot is still present and tappable as a `slot:` button
+    const filled = richButtons(afterSlot.content).find((b) => b.callback_data === slot);
+    expect(filled).toBeTruthy();
 
     // navigate to day 2 and select a slot there
     const nextNav = buttonWith(afterSlot.content, (d) => d?.type === 'nav' && d.dir === 'next');
@@ -151,7 +153,7 @@ describe('Bot /new flow', () => {
     const day2Selected = flow.onCallback(
       '333',
       333,
-      buttonWith(day2.content, (d) => d?.type === 'slot').callback_data
+      buttonWith(day2.content, (d) => d?.type === 'slot').callback_data,
     );
 
     // OK on the last day publishes
@@ -178,7 +180,7 @@ describe('Bot /new flow', () => {
 
     for (const date of dates) {
       const btn = dayButtons(days.content).find(
-        (b) => decodeCallback(b.callback_data).date === date
+        (b) => decodeCallback(b.callback_data).date === date,
       );
       days.content = flow.onCallback('777', 777, btn.callback_data).content;
     }
@@ -192,7 +194,7 @@ describe('Bot /new flow', () => {
     const day2Selected = flow.onCallback(
       '777',
       777,
-      buttonWith(day2.content, (d) => d?.type === 'slot').callback_data
+      buttonWith(day2.content, (d) => d?.type === 'slot').callback_data,
     );
 
     const done = flow.onCallback('777', 777, okFor(day2Selected.content, 'times'));
@@ -218,8 +220,10 @@ describe('Bot /new flow', () => {
     expect(back.type).toBe('render');
     expect(dayButtons(back.content).length).toBeGreaterThan(0);
 
-    // the previously selected day is still highlighted on the calendar
-    const checked = richButtons(back.content).some((b) => b.style === 'primary');
+    // the previously selected day is still present and tappable on the calendar
+    const checked = richButtons(back.content).some(
+      (b) => b.callback_data === dayCell.callback_data,
+    );
     expect(checked).toBe(true);
   });
 

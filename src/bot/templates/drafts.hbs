@@ -1,0 +1,14 @@
+<b>{{draftsTitle}}</b>
+{{#if empty}}
+<i>{{noDrafts}}</i>
+{{else}}
+<table><tr><td button="{{deleteAllCb}}">{{deleteAll}}</td></tr></table>
+{{#each drafts}}
+<b>{{this.title}}</b> — {{this.summary}}
+<i>{{this.createdLabel}}</i>
+<table><tr>
+  <td button="{{this.continueCb}}">{{@root.continueBtn}}</td>
+  <td button="{{this.deleteCb}}">{{@root.deleteDraft}}</td>
+</tr></table>
+{{/each}}
+{{/if}}

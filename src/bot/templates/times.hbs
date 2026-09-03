@@ -1,0 +1,31 @@
+<h3><b>{{date}}</b></h3>
+{{pickSlots}}
+<table>
+  <tr>
+    {{#if prevDisabled}}<td>─</td>{{else}}<td button="{{prevCb}}">◀</td>{{/if}}
+    <td button="{{noopCb}}">{{dayCount}}</td>
+    {{#if nextDisabled}}<td>─</td>{{else}}<td button="{{nextCb}}">▶</td>{{/if}}
+  </tr>
+</table>
+<table>
+  {{#each slotRows}}
+  <tr>
+    {{#each this}}
+      {{#if cb}}
+        {{#if active}}<td button="{{cb}}"><b>{{label}}</b></td>{{else}}<td button="{{cb}}">{{label}}</td>{{/if}}
+      {{else}}
+        <td>{{label}}</td>
+      {{/if}}
+    {{/each}}
+  </tr>
+  {{/each}}
+</table>
+<table>
+  <tr>
+    <td button="{{backCb}}">{{back}} ←</td>
+    {{#if canOk}}<td button="{{okCb}}">{{ok}} ✓</td>{{else}}<td>{{ok}} ✓</td>{{/if}}
+    {{#if canOk}}<td button="{{resetCb}}">{{reset}}</td>{{else}}<td>{{reset}}</td>{{/if}}
+    <td button="{{removeCb}}">{{remove}} ✕</td>
+  </tr>
+</table>
+<i>{{selectedCaption}}</i>

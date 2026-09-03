@@ -101,11 +101,9 @@ async function publishPoll(bot) {
  */
 function pollIdFromMessage(log, method) {
   const publish = [...log].reverse().find((r) => r.method === method);
-  const blocks = publish.body.rich_message.blocks;
-  const stage = blocks
-    .filter((b) => b.type === 'buttons')
-    .flatMap((b) => b.buttons)
-    .find((btn) => String(btn.callback_data).startsWith('stage:'));
+  const stage = richButtons(publish.body).find((btn) =>
+    String(btn.callback_data).startsWith('stage:'),
+  );
   return stage.callback_data.split(':')[1];
 }
 
@@ -117,10 +115,7 @@ function pollIdFromMessage(log, method) {
 function buttonTexts(log, method) {
   const edit = [...log].reverse().find((r) => r.method === method);
   if (!edit) return [];
-  return edit.body.rich_message.blocks
-    .filter((b) => b.type === 'buttons')
-    .flatMap((b) => b.buttons)
-    .map((b) => b.text);
+  return richButtons(edit.body).map((b) => b.label);
 }
 
 /**
@@ -142,10 +137,7 @@ function messageTexts(log, method) {
 function stageButtonCount(log, method) {
   const edit = [...log].reverse().find((r) => r.method === method);
   if (!edit) return 0;
-  return edit.body.rich_message.blocks
-    .filter((b) => b.type === 'buttons')
-    .flatMap((b) => b.buttons)
-    .filter((b) => String(b.callback_data).startsWith('stage:')).length;
+  return richButtons(edit.body).filter((b) => String(b.callback_data).startsWith('stage:')).length;
 }
 
 describe('poll voting via the bot', () => {
@@ -256,15 +248,15 @@ describe('poll voting via the bot', () => {
     await bot.handleUpdate(callbackUpdate(555, `stage:${pollId}:0:y`, 111));
     await bot.handleUpdate(callbackUpdate(555, `stage:${pollId}:0:y`, 111));
 
-    // staged set is now empty: confirm/cancel stay visible but disabled
+    // staged set is now empty: confirm/cancel stay visible but disabled (no
+    // `button` attribute, so they are plain text, not interactive cells)
     const panel = [...log].reverse().find((r) => r.method === 'editMessageText');
-    const buttons = panel ? richButtons(panel.body) : [];
-    const confirm = buttons.find((b) => b.text === 'Confirm \u2713');
-    const cancel = buttons.find((b) => b.text === 'Cancel \u2717');
-    expect(confirm).toBeTruthy();
-    expect(cancel).toBeTruthy();
-    expect(confirm.callback_data).toBeUndefined();
-    expect(cancel.callback_data).toBeUndefined();
+    const text = panel ? richTexts(panel.body).join(' ') : '';
+    expect(text).toContain('Confirm \u2713');
+    expect(text).toContain('Cancel \u2717');
+    expect(richButtons(panel.body).some((b) => /^(vok|vcancel):/.test(b.callback_data))).toBe(
+      false,
+    );
 
     // staged set is now empty, so confirm applies nothing
     await bot.handleUpdate(callbackUpdate(555, `vok:${pollId}`, 111));

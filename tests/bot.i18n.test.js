@@ -53,14 +53,14 @@ describe('UI localization', () => {
     const en = buildDaysMessage(draft, calendar, 'en');
     expect(richTexts(en).join(' ')).toContain('Selected:');
     expect(richTexts(en).join(' ')).toContain('September 2026');
-    expect(richButtons(en).some((b) => b.text === 'Mon')).toBe(true);
+    expect(richTexts(en).join(' ')).toContain('Mon');
 
     const ru = buildDaysMessage(draft, calendar, 'ru');
     expect(richTexts(ru).join(' ')).toContain('Выбрано:');
-    expect(richButtons(ru).some((b) => b.text === 'пн')).toBe(true);
-
-    const okButton = richButtons(ru).find((b) => b.text.startsWith('ОК'));
-    expect(okButton).toBeTruthy();
+    expect(richTexts(ru).join(' ')).toContain('пн');
+    // nothing selected yet: OK/Reset are rendered as plain text, not buttons
+    expect(richTexts(ru).join(' ')).toContain('ОК');
+    expect(richButtons(ru).some((b) => /^(ok|reset):/.test(b.callback_data))).toBe(false);
 
     const arrows = richButtons(en).filter((b) => ['\u25C0', '\u25B6'].includes(b.text));
     expect(arrows.map((b) => b.callback_data)).toEqual(
@@ -101,8 +101,10 @@ describe('UI localization', () => {
     ).toBe(true);
 
     const en = buildTimesMessage(current, 0, generateTimeSlots(), 'en');
-    const labels = richButtons(en).map((b) => b.text);
-    expect(labels).toEqual(expect.arrayContaining(['OK \u2713', 'Reset']));
+    // nothing selected yet: OK/Reset are plain text, not buttons
+    expect(richTexts(en).join(' ')).toContain('OK \u2713');
+    expect(richTexts(en).join(' ')).toContain('Reset');
+    expect(richButtons(en).some((b) => /^(ok|reset):/.test(b.callback_data))).toBe(false);
   });
 
   it('labels time buttons as intervals and shows merged selections', () => {
@@ -176,22 +178,17 @@ describe('UI localization', () => {
     expect(richButtons(en).some((b) => String(b.callback_data).startsWith('vstart:'))).toBe(false);
 
     // initial view (nothing staged yet): Confirm/Cancel are visible but disabled
-    const idleConfirm = richButtons(en).find((b) => b.text === 'Confirm \u2713');
-    const idleCancel = richButtons(en).find((b) => b.text === 'Cancel \u2717');
-    expect(idleConfirm).toBeTruthy();
-    expect(idleCancel).toBeTruthy();
-    expect(idleConfirm.callback_data).toBeUndefined();
-    expect(idleCancel.callback_data).toBeUndefined();
+    // (rendered as plain text cells, not interactive buttons)
+    expect(richTexts(en).join(' ')).toContain('Confirm \u2713');
+    expect(richTexts(en).join(' ')).toContain('Cancel \u2717');
+    expect(richButtons(en).some((b) => /^(vok|vcancel):/.test(b.callback_data))).toBe(false);
 
     const staged = buildPollMessage(view, 'en', new Map());
-    const confirm = richButtons(staged).find((b) => b.text === 'Confirm \u2713');
-    const cancel = richButtons(staged).find((b) => b.text === 'Cancel \u2717');
     // awaiting a vote: confirm/cancel are visible but disabled while no
     // response is staged for any option
-    expect(confirm).toBeTruthy();
-    expect(cancel).toBeTruthy();
-    expect(confirm.callback_data).toBeUndefined();
-    expect(cancel.callback_data).toBeUndefined();
+    expect(richTexts(staged).join(' ')).toContain('Confirm \u2713');
+    expect(richTexts(staged).join(' ')).toContain('Cancel \u2717');
+    expect(richButtons(staged).some((b) => /^(vok|vcancel):/.test(b.callback_data))).toBe(false);
 
     const withChoice = buildPollMessage(view, 'en', new Map([['x', 'yes']]));
     const activeConfirm = richButtons(withChoice).find((b) => b.text === 'Confirm \u2713');

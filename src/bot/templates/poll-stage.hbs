@@ -1,0 +1,25 @@
+<b>{{title}}</b>
+<table>
+  {{#each dateGroups}}
+  <tr>
+    <td colspan="4"><b>{{date}}</b></td>
+  </tr>
+  {{#each rows}}
+  <tr>
+    <td><b>{{interval}}</b></td>
+    {{#if yesSel}}<td button="{{yesCb}}"><b>✓</b></td>{{else}}<td button="{{yesCb}}">✓</td>{{/if}}
+    {{#if maybeSel}}<td button="{{maybeCb}}"><b>~</b></td>{{else}}<td button="{{maybeCb}}">~</td>{{/if}}
+    {{#if noSel}}<td button="{{noCb}}"><b>✗</b></td>{{else}}<td button="{{noCb}}">✗</td>{{/if}}
+  </tr>
+  {{/each}}
+  {{/each}}
+</table>
+{{#if canConfirm}}
+<table>
+  <tr>
+    {{#if canConfirmVote}}<td button="{{confirmCb}}">{{confirm}}</td>{{else}}<td>{{confirm}}</td>{{/if}}
+    {{#if canConfirmVote}}<td button="{{cancelCb}}">{{cancel}}</td>{{else}}<td>{{cancel}}</td>{{/if}}
+  </tr>
+</table>
+{{/if}}
+<i>{{participants}}</i>

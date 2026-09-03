@@ -1,9 +1,6 @@
-import {
-  RichMessageBuilder,
-  RichTextBuilder,
-  richMessageButton,
-  richTableCell,
-} from 'node-telegram-bot-api';
+import Handlebars from 'handlebars';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { formatDisplayDate } from './slots.js';
 import { calendarGrid } from './calendar.js';
 import { getTranslator } from './i18n.js';
@@ -28,6 +25,23 @@ import {
   STEP,
 } from './callback-data.js';
 import { VoteService } from '../domains/vote/vote.service.js';
+import { htmlTexts, htmlButtons } from './html-helpers.js';
+
+const pollResultsTemplate = Handlebars.compile(
+  readFileSync(fileURLToPath(new URL('./templates/poll-results.hbs', import.meta.url)), 'utf8'),
+);
+const pollStageTemplate = Handlebars.compile(
+  readFileSync(fileURLToPath(new URL('./templates/poll-stage.hbs', import.meta.url)), 'utf8'),
+);
+const calendarTemplate = Handlebars.compile(
+  readFileSync(fileURLToPath(new URL('./templates/calendar.hbs', import.meta.url)), 'utf8'),
+);
+const timesTemplate = Handlebars.compile(
+  readFileSync(fileURLToPath(new URL('./templates/times.hbs', import.meta.url)), 'utf8'),
+);
+const draftsTemplate = Handlebars.compile(
+  readFileSync(fileURLToPath(new URL('./templates/drafts.hbs', import.meta.url)), 'utf8'),
+);
 
 /**
  * Rich fragments used inside the HTML message bodies. The bot uses classic
@@ -65,98 +79,68 @@ export function buildDaysMessage(draft, calendar, locale = 'en', maxDays = confi
   const today = startOfTodayIso();
   const atLimit = selected.size >= maxDays;
 
-  const title = new RichTextBuilder();
-  if (draft.title) title.bold(draft.title);
-  else title.italic(t('untitled'));
-
-  const builder = new RichMessageBuilder().paragraph(title);
-
-  builder.heading(grid.title, 3);
-
-  builder.buttons([
-    richMessageButton('\u25C0', { callback_data: monthCallback(-1) }),
-    richMessageButton('\u25B6', { callback_data: monthCallback(1) }),
-  ]);
-
-  builder.buttons(grid.weekdays.map((wd) => richMessageButton(wd, { disabled: {} })));
-
-  for (const week of grid.weeks) {
-    builder.buttons(
-      week.map((cell) => {
-        if (!cell.isoDate) return richMessageButton('\u00A0', { disabled: {} });
-        const past = cell.isoDate < today; // past dates are not schedulable
-        const active = selected.has(cell.isoDate);
-        const disabled = past || (atLimit && !active); // no more picks once at the day limit
-        const options = disabled ? { disabled: {} } : { callback_data: dayCallback(cell.isoDate) };
-        return richMessageButton(String(cell.day), {
-          ...(active ? { style: 'primary' } : {}),
-          ...options,
-        });
-      }),
-    );
-  }
-
-  builder.buttons([
-    richMessageButton(`${t('ok')} \u2713`, {
-      ...(selected.size === 0 ? { disabled: {} } : { callback_data: okCallback(STEP.DAYS) }),
+  const weeks = grid.weeks.map((week) =>
+    week.map((cell) => {
+      if (!cell.isoDate) return { blank: true };
+      const past = cell.isoDate < today;
+      const active = selected.has(cell.isoDate);
+      const disabled = past || (atLimit && !active);
+      return {
+        day: String(cell.day),
+        cb: disabled ? '' : dayCallback(cell.isoDate),
+        active,
+      };
     }),
-    richMessageButton(t('reset'), {
-      ...(selected.size === 0 ? { disabled: {} } : { callback_data: resetCallback(STEP.DAYS) }),
-    }),
-    richMessageButton(`${t('remove')} \u2715`, { callback_data: removeDraftCallback() }),
-  ]);
+  );
 
+  const canOk = selected.size > 0;
   const selectedLabel =
     selected.size === 0
       ? t('none')
       : [...selected].map((d) => formatDisplayDate(d, locale)).join(', ');
-  builder.paragraph(
-    `${t('pickDays')}\n${t('selectedInMax', { n: selected.size, max: maxDays })} ${selectedLabel}`,
-  );
 
-  return { rich_message: builder.build() };
+  return {
+    rich_message: {
+      html: calendarTemplate({
+        title: draft.title ? `<b>${draft.title}</b>` : `<i>${t('untitled')}</i>`,
+        monthTitle: grid.title,
+        prevMonth: monthCallback(-1),
+        nextMonth: monthCallback(1),
+        weekdays: grid.weekdays,
+        weeks,
+        canOk,
+        okCb: okCallback(STEP.DAYS),
+        resetCb: resetCallback(STEP.DAYS),
+        ok: t('ok'),
+        reset: t('reset'),
+        removeCb: removeDraftCallback(),
+        remove: t('remove'),
+        pickDays: t('pickDays'),
+        selectedCaption:
+          t('selectedInMax', { n: selected.size, max: maxDays }) + ' ' + selectedLabel,
+      }),
+    },
+  };
 }
 
 /**
- * Collects every button from a rich message's `buttons` blocks, in order.
- * @param {{ rich_message: import('node-telegram-bot-api').InputRichMessage }} content
- * @returns {Array<import('node-telegram-bot-api').RichMessageButton>}
+ * Collects every interactive `<td button="...">` cell from an HTML rich
+ * message.
+ * @param {{ rich_message: { html: string } }} content
+ * @returns {Array<{ text: string, label: string, callback_data: string }>}
  */
 export function richButtons(content) {
-  const blocks = content.rich_message?.blocks ?? [];
-  return blocks.filter((block) => block.type === 'buttons').flatMap((block) => block.buttons);
+  return htmlButtons(content.rich_message.html);
 }
 
 /**
- * Collects the plain text of a rich message's text-bearing blocks, in order.
- * Nested rich-text nodes (bold, italic, ...) are flattened into their leaf
- * strings.
- * @param {{ rich_message: import('node-telegram-bot-api').InputRichMessage }} content
+ * Collects the plain text of an HTML rich message as a single joined string.
+ * @param {{ rich_message: { html: string } }} content
  * @returns {Array<string>}
  */
 export function richTexts(content) {
-  const blocks = content.rich_message?.blocks ?? [];
-  return blocks
-    .flatMap((block) => {
-      if (block.type === 'table') return block.cells.flat().map((cell) => cell.text);
-      return [block.text];
-    })
-    .filter((text) => text != null && text !== '')
-    .map(flattenRichText);
-}
-
-/**
- * Recursively flattens a RichText tree into its plain string leaves.
- * @param {import('node-telegram-bot-api').RichText} text
- * @returns {string}
- */
-function flattenRichText(text) {
-  if (typeof text === 'string') return text;
-  if (Array.isArray(text)) return text.map(flattenRichText).join('');
-  if (text && typeof text === 'object' && typeof text.text !== 'undefined') {
-    return flattenRichText(text.text);
-  }
-  return '';
+  const text = htmlTexts(content.rich_message.html);
+  return text.length ? [text] : [];
 }
 
 /**
@@ -182,8 +166,7 @@ export function buildTimesMessage(
   const dates = draft.selectedDates;
   const date = dates[dayIndex] ?? dates[0];
   if (!date) {
-    const builder = new RichMessageBuilder().paragraph(`${t('noDays')}`);
-    return { rich_message: builder.build() };
+    return { rich_message: { html: `<p>${t('noDays')}</p>` } };
   }
 
   const selectedForDate = draft.timeSlots.filter((slot) => slot.date === date);
@@ -192,56 +175,52 @@ export function buildTimesMessage(
   const chosenSize = countUnits(selectedForDate);
   const atLimit = chosenSize >= maxPerDay;
 
-  const builder = new RichMessageBuilder().heading(
-    new RichTextBuilder().bold(formatDisplayDate(date, locale)),
-    3,
-  );
-  builder.paragraph(t('pickSlots'));
-
   const prevDisabled = dayIndex === 0;
   const nextDisabled = dayIndex === dates.length - 1;
-  builder.buttons([
-    prevDisabled
-      ? richMessageButton('\u2500', { disabled: {} })
-      : richMessageButton('\u25C0', { callback_data: navCallback('prev') }),
-    richMessageButton(`${dayIndex + 1}/${dates.length}`, { callback_data: noopCallback() }),
-    nextDisabled
-      ? richMessageButton('\u2500', { disabled: {} })
-      : richMessageButton('\u25B6', { callback_data: navCallback('next') }),
-  ]);
 
+  const slotRows = [];
   for (let i = 0; i < timeSlots.length; i += 3) {
-    builder.buttons(
+    slotRows.push(
       timeSlots.slice(i, i + 3).map((slot) => {
         const active = chosenUnits.some((u) => u.start === slot.start && u.end === slot.end);
-        const disabled = atLimit && !active; // no more picks once at this day's slot limit
-        const options = disabled
-          ? { disabled: {} }
-          : { callback_data: slotCallback(date, slot.start) };
-        return richMessageButton(formatSlot(slot), {
-          ...(active ? { style: 'primary' } : {}),
-          ...options,
-        });
+        const disabled = atLimit && !active;
+        return {
+          label: formatSlot(slot),
+          cb: disabled ? '' : slotCallback(date, slot.start),
+          active,
+        };
       }),
     );
   }
 
-  builder.buttons([
-    richMessageButton(`${t('back')} \u2190`, { callback_data: backCallback() }),
-    richMessageButton(`${t('ok')} \u2713`, {
-      ...(chosenSize === 0 ? { disabled: {} } : { callback_data: okCallback(STEP.TIMES) }),
-    }),
-    richMessageButton(t('reset'), {
-      ...(chosenSize === 0 ? { disabled: {} } : { callback_data: resetCallback(STEP.TIMES) }),
-    }),
-    richMessageButton(`${t('remove')} \u2715`, { callback_data: removeDraftCallback() }),
-  ]);
-
   const selectedLabel =
     selectedIntervals.length === 0 ? t('none') : selectedIntervals.map(formatSlot).join(', ');
-  builder.paragraph(`${t('selectedInMax', { n: chosenSize, max: maxPerDay })} ${selectedLabel}`);
 
-  return { rich_message: builder.build() };
+  return {
+    rich_message: {
+      html: timesTemplate({
+        date: formatDisplayDate(date, locale),
+        pickSlots: t('pickSlots'),
+        prevDisabled,
+        prevCb: navCallback('prev'),
+        nextDisabled,
+        nextCb: navCallback('next'),
+        noopCb: noopCallback(),
+        dayCount: `${dayIndex + 1}/${dates.length}`,
+        slotRows,
+        backCb: backCallback(),
+        back: t('back'),
+        canOk: chosenSize > 0,
+        okCb: okCallback(STEP.TIMES),
+        resetCb: resetCallback(STEP.TIMES),
+        ok: t('ok'),
+        reset: t('reset'),
+        removeCb: removeDraftCallback(),
+        remove: t('remove'),
+        selectedCaption: `${t('selectedInMax', { n: chosenSize, max: maxPerDay })} ${selectedLabel}`,
+      }),
+    },
+  };
 }
 
 /**
@@ -262,97 +241,75 @@ export function buildPollMessage(view, locale = 'en', staged = null) {
   const { poll, rows } = view;
   const open = VoteService.canVote(poll);
 
-  const builder = new RichMessageBuilder().paragraph(new RichTextBuilder().bold(poll.title));
-
   const isResults = !open || view.voted;
 
   if (isResults) {
-    const cells = [];
+    const dateGroups = [];
     let lastDate = null;
+    let group = null;
     for (const row of rows) {
       if (row.date !== lastDate) {
-        cells.push([
-          richTableCell(new RichTextBuilder().bold(formatDisplayDate(row.date, locale)), {
-            align: 'left',
-          }),
-          richTableCell('\u2713', { align: 'center' }),
-          richTableCell('~', { align: 'center' }),
-          richTableCell('\u2717', { align: 'center' }),
-        ]);
+        group = { date: formatDisplayDate(row.date, locale), rows: [] };
+        dateGroups.push(group);
         lastDate = row.date;
       }
       const max = Math.max(row.counts.yes, row.counts.maybe, row.counts.no);
-      const bold = (n) =>
-        n === max && max > 0
-          ? richTableCell(new RichTextBuilder().bold(String(n)), { align: 'center' })
-          : richTableCell(String(n), { align: 'center' });
-      cells.push([
-        richTableCell(new RichTextBuilder().bold(`${row.start}\u2013${row.end}`), {
-          align: 'left',
+      const bold = (n) => (n === max && max > 0 ? `<b>${n}</b>` : String(n));
+      group.rows.push({
+        interval: `${row.start}\u2013${row.end}`,
+        yes: bold(row.counts.yes),
+        maybe: bold(row.counts.maybe),
+        no: bold(row.counts.no),
+      });
+    }
+    return {
+      rich_message: {
+        html: pollResultsTemplate({
+          title: poll.title,
+          dateGroups,
+          participants: `${t('participants')} ${view.participantCount}`,
         }),
-        bold(row.counts.yes),
-        bold(row.counts.maybe),
-        bold(row.counts.no),
-      ]);
-    }
-    builder.table(cells);
-  } else {
-    let lastDate = null;
-    for (const row of rows) {
-      if (row.date !== lastDate) {
-        builder.paragraph(new RichTextBuilder().bold(formatDisplayDate(row.date, locale)));
-        lastDate = row.date;
-      }
-
-      const label = `${row.start}\u2013${row.end}`;
-      const counts = `\u2713${row.counts.yes}  ~${row.counts.maybe}  \u2717${row.counts.no}`;
-      const result = new RichTextBuilder().bold(label).plain(`  ${counts}`);
-
-      if (staged) {
-        const choice = choiceFor(staged, row);
-        builder.paragraph(result);
-        builder.buttons([
-          richMessageButton('\u2713', {
-            callback_data: stageCallback(poll.id, row.index, 'yes'),
-            ...(choice === 'yes' ? { style: 'primary' } : {}),
-          }),
-          richMessageButton('~', {
-            callback_data: stageCallback(poll.id, row.index, 'maybe'),
-            ...(choice === 'maybe' ? { style: 'primary' } : {}),
-          }),
-          richMessageButton('\u2717', {
-            callback_data: stageCallback(poll.id, row.index, 'no'),
-            ...(choice === 'no' ? { style: 'primary' } : {}),
-          }),
-        ]);
-      } else {
-        builder.paragraph(result);
-        builder.buttons([
-          richMessageButton('\u2713', { callback_data: stageCallback(poll.id, row.index, 'yes') }),
-          richMessageButton('~', { callback_data: stageCallback(poll.id, row.index, 'maybe') }),
-          richMessageButton('\u2717', { callback_data: stageCallback(poll.id, row.index, 'no') }),
-        ]);
-      }
-    }
+      },
+    };
   }
 
-  if (open && !view.voted) {
-    // the viewer can still stage a vote: Confirm / Cancel are always visible,
-    // but disabled until at least one response has been staged for an option.
-    const noAnswers = !staged || staged.size === 0;
-    builder.buttons([
-      richMessageButton(`${t('confirm')} \u2713`, {
-        ...(noAnswers ? { disabled: {} } : { callback_data: voteConfirmCallback(poll.id) }),
-      }),
-      richMessageButton(`${t('cancel')} \u2717`, {
-        ...(noAnswers ? { disabled: {} } : { callback_data: voteCancelCallback(poll.id) }),
-      }),
-    ]);
+  const dateGroups = [];
+  let lastDate = null;
+  let group = null;
+  for (const row of rows) {
+    if (row.date !== lastDate) {
+      group = { date: formatDisplayDate(row.date, locale), rows: [] };
+      dateGroups.push(group);
+      lastDate = row.date;
+    }
+    const choice = staged ? choiceFor(staged, row) : undefined;
+    group.rows.push({
+      interval: `${row.start}\u2013${row.end}`,
+      yesCb: stageCallback(poll.id, row.index, 'yes'),
+      maybeCb: stageCallback(poll.id, row.index, 'maybe'),
+      noCb: stageCallback(poll.id, row.index, 'no'),
+      yesSel: choice === 'yes',
+      maybeSel: choice === 'maybe',
+      noSel: choice === 'no',
+    });
   }
 
-  builder.paragraph(`${t('participants')} ${view.participantCount}`);
-
-  return { rich_message: builder.build() };
+  const noAnswers = !staged || staged.size === 0;
+  return {
+    rich_message: {
+      html: pollStageTemplate({
+        title: poll.title,
+        dateGroups,
+        canConfirm: open && !view.voted,
+        canConfirmVote: open && !view.voted && !noAnswers,
+        confirmCb: voteConfirmCallback(poll.id),
+        cancelCb: voteCancelCallback(poll.id),
+        confirm: `${t('confirm')} \u2713`,
+        cancel: `${t('cancel')} \u2717`,
+        participants: `${t('participants')} ${view.participantCount}`,
+      }),
+    },
+  };
 }
 
 /**
@@ -382,39 +339,48 @@ function choiceFor(staged, row) {
  */
 export function buildDraftsMessage(drafts, locale = 'en') {
   const t = getTranslator(locale);
-  const builder = new RichMessageBuilder().paragraph(new RichTextBuilder().bold(t('draftsTitle')));
 
   if (drafts.length === 0) {
-    builder.paragraph(t('noDrafts'));
-    return { rich_message: builder.build() };
+    return {
+      rich_message: {
+        html: draftsTemplate({
+          draftsTitle: t('draftsTitle'),
+          empty: true,
+          noDrafts: t('noDrafts'),
+        }),
+      },
+    };
   }
 
-  builder.buttons([
-    richMessageButton(t('deleteAllDrafts'), { callback_data: deleteAllDraftsCallback() }),
-  ]);
-
-  for (const draft of drafts) {
+  const rows = drafts.map((draft) => {
     const title = draft.title || t('untitled');
     const summary = `${t('daysShort', { n: draft.selectedDates.length })} \u00B7 ${t('slotsShort', {
       n: countUnits(draft.timeSlots),
     })}`;
-    builder.paragraph(new RichTextBuilder().bold(title).plain(` \u2014 ${summary}`));
+    return {
+      title,
+      summary,
+      createdLabel: draft.createdAt
+        ? t('createdOn', { date: String(draft.createdAt).slice(0, 10) })
+        : '',
+      continueCb: editDraftCallback(draft.id),
+      deleteCb: deleteDraftCallback(draft.id),
+    };
+  });
 
-    if (draft.createdAt) {
-      builder.paragraph(`${t('createdOn', { date: String(draft.createdAt).slice(0, 10) })}`);
-    }
-
-    builder.buttons([
-      richMessageButton(`${t('continue')}`, {
-        callback_data: editDraftCallback(draft.id),
+  return {
+    rich_message: {
+      html: draftsTemplate({
+        draftsTitle: t('draftsTitle'),
+        empty: false,
+        deleteAllCb: deleteAllDraftsCallback(),
+        deleteAll: t('deleteAllDrafts'),
+        drafts: rows,
+        continueBtn: t('continue'),
+        deleteDraft: t('deleteDraft'),
       }),
-      richMessageButton(`${t('deleteDraft')}`, {
-        callback_data: deleteDraftCallback(draft.id),
-      }),
-    ]);
-  }
-
-  return { rich_message: builder.build() };
+    },
+  };
 }
 
 /**

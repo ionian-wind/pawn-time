@@ -1,4 +1,5 @@
 import { createBot } from '../src/bot/index.js';
+import { richButtons } from '../src/bot/ui.js';
 
 const okBody = (result) => JSON.stringify({ ok: true, result });
 
@@ -60,13 +61,9 @@ describe('day select rich message', () => {
     expect(send).toBeTruthy();
     expect(send.body.rich_message).toBeTruthy();
 
-    const blocks = send.body.rich_message.blocks;
-    const buttonBlocks = blocks.filter((b) => b.type === 'buttons');
-    expect(buttonBlocks.length).toBeGreaterThan(0);
-
-    const dayButtons = buttonBlocks
-      .flatMap((b) => b.buttons)
-      .filter((btn) => String(btn.callback_data).startsWith('day:'));
+    const dayButtons = richButtons(send.body).filter((btn) =>
+      String(btn.callback_data).startsWith('day:'),
+    );
     expect(dayButtons.length).toBeGreaterThan(0);
     expect(dayButtons[0].text.length).toBeGreaterThan(0);
   });
@@ -112,9 +109,7 @@ describe('day select rich message', () => {
     await bot.handleUpdate(withText('/new Team sync'));
 
     const send = log.find((r) => r.method === 'sendRichMessage');
-    const buttons = send.body.rich_message.blocks
-      .flatMap((b) => (b.type === 'buttons' ? b.buttons : []))
-      .map((b) => [b.text, String(b.callback_data)]);
+    const buttons = richButtons(send.body).map((b) => [b.text, String(b.callback_data)]);
     expect(buttons).toContainEqual(['Remove \u2715', 'remove:']);
 
     await bot.handleUpdate({
