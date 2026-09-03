@@ -251,4 +251,40 @@ describe('message pipeline', () => {
     expect(a).toBe(b);
     expect(a).not.toBe(c);
   });
+
+  it('does not replay a pending row while its original call is still in-flight', async () => {
+    const sent = [];
+    let releaseOriginal;
+    const originalGate = new Promise((resolve) => {
+      releaseOriginal = resolve;
+    });
+    const bot = createBot('123:fake', {
+      fetch: async (url) => {
+        const method = url.split('/').pop();
+        if (method !== 'sendMessage') {
+          return { status: 200, text: async () => JSON.stringify({ ok: true, result: true }) };
+        }
+        sent.push(method);
+        await originalGate;
+        const result = { message_id: 777, chat: { id: 111 } };
+        return { status: 200, text: async () => JSON.stringify({ ok: true, result }) };
+      },
+      maxRetries: 1,
+    });
+
+    const inFlight = bot.api.sendMessage({ chat_id: 111, text: 'slow' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const count = await bot.flushOutbox();
+    expect(count).toBe(0);
+    expect(sent).toHaveLength(1);
+
+    releaseOriginal();
+    await inFlight;
+
+    const rows = outgoingRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'sent', attempts: 1 });
+    expect(sent).toHaveLength(1);
+  });
 });

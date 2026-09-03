@@ -4,6 +4,13 @@ import { BaseRepository } from '../../db/base-repository.js';
 import { getDatabase } from '../../db/database.js';
 
 /**
+ * Outbox rows that are currently being dispatched directly by an in-flight
+ * `withApiLogging` call. The background `flushOutbox` drain must skip these so
+ * a slow (laggy) original request is not re-sent while it is still in flight.
+ */
+const inflight = new Set();
+
+/**
  * Outbox of outbound Telegram API requests. Every message the bot wants to send
  * is first recorded here and drained to the real API by the dispatcher, so a
  * restart never drops a send. `status` transitions pending -> sent (success) or
@@ -79,7 +86,9 @@ export class OutboxRepository extends BaseRepository {
   }
 
   /**
-   * Returns the oldest pending messages, oldest first, up to `limit`.
+   * Returns the oldest pending messages, oldest first, up to `limit`, excluding
+   * rows currently being dispatched in-flight by a live caller (so a slow
+   * request is not re-sent by the background drain).
    * @param {number} [limit]
    * @returns {Array<import('./message.entity.js').OutgoingMessage>}
    */
@@ -93,7 +102,24 @@ export class OutboxRepository extends BaseRepository {
          LIMIT ?`,
       )
       .all(limit);
-    return rows.map((row) => this.mapRowToEntity(row));
+    return rows.filter((row) => !inflight.has(row.id)).map((row) => this.mapRowToEntity(row));
+  }
+
+  /**
+   * Marks an outbox row as being dispatched in-flight right now by a live
+   * caller, so the background drain skips it. Safe to call redundantly.
+   * @param {string} id
+   */
+  static claim(id) {
+    if (id != null) inflight.add(id);
+  }
+
+  /**
+   * Clears the in-flight claim for a row once its direct dispatch has settled.
+   * @param {string} id
+   */
+  static release(id) {
+    if (id != null) inflight.delete(id);
   }
 
   /**

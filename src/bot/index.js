@@ -80,7 +80,7 @@ export function createBot(token, options = {}) {
           groupChatId,
           from.id,
           start.content,
-          ctx.message.ephemeral_message_id
+          ctx.message.ephemeral_message_id,
         );
         if (sent.ephemeral_message_id != null) {
           flow.setEphemeralMessageId(start.sessionKey, sent.ephemeral_message_id);
@@ -104,7 +104,7 @@ export function createBot(token, options = {}) {
     if (!from) return;
     const user = UserRepository.findOrCreateBySession(
       { name: from.first_name || undefined },
-      String(from.id)
+      String(from.id),
     );
     const drafts = DraftService.listDrafts(user.id);
     const content = buildDraftsMessage(drafts, normalizeLocale(from.language_code));
@@ -116,7 +116,7 @@ export function createBot(token, options = {}) {
           groupChatId,
           from.id,
           content,
-          ctx.message.ephemeral_message_id
+          ctx.message.ephemeral_message_id,
         );
         return;
       } catch {
@@ -154,7 +154,7 @@ export function createBot(token, options = {}) {
             chatId,
             ephemeralReceiverId(message),
             message.ephemeral_message_id,
-            result.content
+            result.content,
           );
         } else if (message.message_id) {
           await editMessage(bot, chatId, message.message_id, result.content);
@@ -224,7 +224,7 @@ async function present(bot, flow, result) {
       sess.chatId,
       sess.receiverUserId,
       sess.ephemeralMessageId,
-      result.content
+      result.content,
     );
   } else if (sess?.messageId) {
     await editMessage(bot, sess.chatId, sess.messageId, result.content);
@@ -257,7 +257,7 @@ async function handlePollCallback(bot, decoded, sessionId, languageCode) {
         decoded.optionIndex,
         decoded.response,
         sessionId,
-        languageCode
+        languageCode,
       );
       return true;
     case 'vconfirm':
@@ -287,7 +287,7 @@ async function handleDraftsCallback(bot, flow, ctx, decoded) {
   if (!from) return true;
   const user = UserRepository.findOrCreateBySession(
     { name: from.first_name || undefined },
-    String(from.id)
+    String(from.id),
   );
   const message = ctx.callbackQuery?.message;
   const chatId = String(message?.chat?.id ?? from.id);
@@ -300,7 +300,7 @@ async function handleDraftsCallback(bot, flow, ctx, decoded) {
         chatId,
         receiverUserId,
         message.ephemeral_message_id,
-        content
+        content,
       );
     } else if (message?.message_id) {
       await editMessage(bot, chatId, message.message_id, content);
@@ -312,7 +312,7 @@ async function handleDraftsCallback(bot, flow, ctx, decoded) {
     if (!draft) {
       // already deleted elsewhere: refresh the list in place
       await render(
-        buildDraftsMessage(DraftService.listDrafts(user.id), normalizeLocale(from.language_code))
+        buildDraftsMessage(DraftService.listDrafts(user.id), normalizeLocale(from.language_code)),
       );
       return true;
     }
@@ -324,7 +324,7 @@ async function handleDraftsCallback(bot, flow, ctx, decoded) {
       draft,
       receiverUserId != null
         ? { receiverUserId, ephemeralMessageId: message?.ephemeral_message_id }
-        : {}
+        : {},
     );
     if (!resumed) return true;
     if (receiverUserId != null && message?.ephemeral_message_id != null) {
@@ -339,14 +339,14 @@ async function handleDraftsCallback(bot, flow, ctx, decoded) {
   if (decoded.type === 'delall') {
     DraftService.deleteAllDrafts(user.id);
     await render(
-      buildDraftsMessage(DraftService.listDrafts(user.id), normalizeLocale(from.language_code))
+      buildDraftsMessage(DraftService.listDrafts(user.id), normalizeLocale(from.language_code)),
     );
     return true;
   }
 
   DraftService.deleteDraft(decoded.draftId, user.id);
   await render(
-    buildDraftsMessage(DraftService.listDrafts(user.id), normalizeLocale(from.language_code))
+    buildDraftsMessage(DraftService.listDrafts(user.id), normalizeLocale(from.language_code)),
   );
   return true;
 }
@@ -434,7 +434,7 @@ async function renderPoll(bot, pollId, sessionId, languageCode, staged) {
   const content = buildPollMessage(
     buildPollView(poll, sessionId),
     normalizeLocale(languageCode),
-    staged
+    staged,
   );
   await editMessage(bot, msg.chatId, msg.messageId, content);
 }
@@ -595,7 +595,7 @@ async function replyUsage(bot, ctx) {
         groupChatId,
         from.id,
         { text: esc(usage) },
-        ctx.message.ephemeral_message_id
+        ctx.message.ephemeral_message_id,
       );
       return;
     } catch {
@@ -643,6 +643,7 @@ function withApiLogging(bot, rawRequest) {
   bot.api.request = async (method, params, signal) => {
     const journal = journalOutbound(method, params);
     const started = Date.now();
+    if (journal) OutboxRepository.claim(journal.id);
     try {
       const response = await rawRequest(method, params, signal);
       if (journal) OutboxRepository.markSent(journal.id);
@@ -663,6 +664,8 @@ function withApiLogging(bot, rawRequest) {
         message: err?.message,
       });
       throw err;
+    } finally {
+      if (journal) OutboxRepository.release(journal.id);
     }
   };
 }
