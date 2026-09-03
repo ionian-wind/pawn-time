@@ -196,7 +196,7 @@ describe('poll voting via the bot', () => {
     // the merged interval is a single option: one vote applied after confirm
     const after = VoteService.getParticipantVotes(pollId, '999');
     expect(after && Object.values(after)).toEqual(['yes']);
-    expect(messageTexts(log, 'editMessageText')).toContain('\u27131');
+    expect(messageTexts(log, 'editMessageText')).toContain('09:00\u201310:00 1 0 0');
     expect(stageButtonCount(log, 'editMessageText')).toBe(0);
   });
 
@@ -212,7 +212,7 @@ describe('poll voting via the bot', () => {
 
     const after = VoteService.getParticipantVotes(pollId, '666');
     expect(after && Object.values(after)).toEqual(['maybe']);
-    expect(messageTexts(log, 'editMessageText')).toContain('~1');
+    expect(messageTexts(log, 'editMessageText')).toContain('09:00\u201310:00 0 1 0');
     expect(stageButtonCount(log, 'editMessageText')).toBe(0);
   });
 
@@ -228,7 +228,7 @@ describe('poll voting via the bot', () => {
 
     const after = VoteService.getParticipantVotes(pollId, '777');
     expect(after && Object.values(after)).toEqual(['no']);
-    expect(messageTexts(log, 'editMessageText')).toContain('\u27171');
+    expect(messageTexts(log, 'editMessageText')).toContain('09:00\u201310:00 0 0 1');
     expect(stageButtonCount(log, 'editMessageText')).toBe(0);
   });
 

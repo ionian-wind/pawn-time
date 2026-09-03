@@ -175,6 +175,14 @@ describe('UI localization', () => {
     expect(stageButtons.filter((b) => String(b.callback_data).endsWith(':m'))).toHaveLength(2);
     expect(richButtons(en).some((b) => String(b.callback_data).startsWith('vstart:'))).toBe(false);
 
+    // initial view (nothing staged yet): Confirm/Cancel are visible but disabled
+    const idleConfirm = richButtons(en).find((b) => b.text === 'Confirm \u2713');
+    const idleCancel = richButtons(en).find((b) => b.text === 'Cancel \u2717');
+    expect(idleConfirm).toBeTruthy();
+    expect(idleCancel).toBeTruthy();
+    expect(idleConfirm.callback_data).toBeUndefined();
+    expect(idleCancel.callback_data).toBeUndefined();
+
     const staged = buildPollMessage(view, 'en', new Map());
     const confirm = richButtons(staged).find((b) => b.text === 'Confirm \u2713');
     const cancel = richButtons(staged).find((b) => b.text === 'Cancel \u2717');
@@ -215,7 +223,7 @@ describe('UI localization', () => {
     }
 
     const after = buildPollMessage(buildPollView(poll, String(author.id)), 'en');
-    expect(richTexts(after).join(' ')).toContain('\u27131');
+    expect(richTexts(after).join(' ')).toContain('09:00\u201310:00 1 0 0');
     expect(richButtons(after).some((b) => String(b.callback_data).startsWith('stage:'))).toBe(
       false,
     );

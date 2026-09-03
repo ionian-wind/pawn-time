@@ -1,4 +1,9 @@
-import { RichMessageBuilder, RichTextBuilder, richMessageButton } from 'node-telegram-bot-api';
+import {
+  RichMessageBuilder,
+  RichTextBuilder,
+  richMessageButton,
+  richTableCell,
+} from 'node-telegram-bot-api';
 import { formatDisplayDate } from './slots.js';
 import { calendarGrid } from './calendar.js';
 import { getTranslator } from './i18n.js';
@@ -132,7 +137,10 @@ export function richButtons(content) {
 export function richTexts(content) {
   const blocks = content.rich_message?.blocks ?? [];
   return blocks
-    .map((block) => block.text)
+    .flatMap((block) => {
+      if (block.type === 'table') return block.cells.flat().map((cell) => cell.text);
+      return [block.text];
+    })
     .filter((text) => text != null && text !== '')
     .map(flattenRichText);
 }
@@ -237,14 +245,13 @@ export function buildTimesMessage(
 }
 
 /**
- * Builds the live poll screen as a RICH MESSAGE. Each option row shows its live
- * Yes/Maybe/No counts and one stage button per response. Pressing a stage
- * button moves the viewer into a per-user staging panel (`staged` is a Map of
- * option id -> response), highlighting the choice and showing global Confirm /
- * Cancel buttons below. Staged choices are never applied until Confirm is
- * pressed; choosing the same response again removes it from the staged set.
- * Once the viewer has voted a row (or the poll is closed), the row collapses
- * to its totals and the stage buttons are hidden.
+ * Builds the live poll screen as a RICH MESSAGE. When the viewer can still vote
+ * (staging view), each option row shows its live Yes/Maybe/No counts and one
+ * stage button per response. Pressing a stage button moves the viewer into a
+ * per-user staging panel (`staged` is a Map of option id -> response),
+ * highlighting the choice and showing global Confirm / Cancel buttons below.
+ * When the poll is closed or the viewer has already voted (results view),
+ * intervals and counts are rendered as a table grouped by date.
  * @param {ReturnType<import('./poll-view.js').buildPollView>} view
  * @param {string} [locale]
  * @param {Map<string, import('../domains/vote/vote.entity.js').VoteResponse> | null} [staged]
@@ -259,52 +266,77 @@ export function buildPollMessage(view, locale = 'en', staged = null) {
 
   if (staged) builder.paragraph(t('stagedHint'));
 
-  let lastDate = null;
-  for (const row of rows) {
-    if (row.date !== lastDate) {
-      builder.paragraph(new RichTextBuilder().bold(formatDisplayDate(row.date, locale)));
-      lastDate = row.date;
+  const isResults = !open || view.voted;
+
+  if (isResults) {
+    const rowsByDate = new Map();
+    for (const row of rows) {
+      if (!rowsByDate.has(row.date)) rowsByDate.set(row.date, []);
+      rowsByDate.get(row.date).push(row);
     }
 
-    const label = `${row.start}\u2013${row.end}`;
-    const counts = `\u2713${row.counts.yes}  ~${row.counts.maybe}  \u2717${row.counts.no}`;
-    const result = new RichTextBuilder().bold(label).plain(`  ${counts}`);
+    for (const [date, dateRows] of rowsByDate) {
+      builder.paragraph(new RichTextBuilder().bold(formatDisplayDate(date, locale)));
+      builder.table([
+        [
+          richTableCell('\u2713', { align: 'center' }),
+          richTableCell('~', { align: 'center' }),
+          richTableCell('\u2717', { align: 'center' }),
+        ],
+        ...dateRows.map((row) => [
+          richTableCell(new RichTextBuilder().bold(`${row.start}\u2013${row.end}`), {
+            align: 'left',
+          }),
+          richTableCell(String(row.counts.yes), { align: 'center' }),
+          richTableCell(String(row.counts.maybe), { align: 'center' }),
+          richTableCell(String(row.counts.no), { align: 'center' }),
+        ]),
+      ]);
+    }
+  } else {
+    let lastDate = null;
+    for (const row of rows) {
+      if (row.date !== lastDate) {
+        builder.paragraph(new RichTextBuilder().bold(formatDisplayDate(row.date, locale)));
+        lastDate = row.date;
+      }
 
-    if (staged) {
-      const choice = choiceFor(staged, row);
-      builder.paragraph(result);
-      builder.buttons([
-        richMessageButton('\u2713', {
-          callback_data: stageCallback(poll.id, row.index, 'yes'),
-          ...(choice === 'yes' ? { style: 'primary' } : {}),
-        }),
-        richMessageButton('~', {
-          callback_data: stageCallback(poll.id, row.index, 'maybe'),
-          ...(choice === 'maybe' ? { style: 'primary' } : {}),
-        }),
-        richMessageButton('\u2717', {
-          callback_data: stageCallback(poll.id, row.index, 'no'),
-          ...(choice === 'no' ? { style: 'primary' } : {}),
-        }),
-      ]);
-    } else if (row.mine || view.voted || !open) {
-      // already voted (this row or anywhere in the poll, or the poll is closed):
-      // totals only, no stage buttons
-      builder.paragraph(result);
-    } else {
-      builder.paragraph(result);
-      builder.buttons([
-        richMessageButton('\u2713', { callback_data: stageCallback(poll.id, row.index, 'yes') }),
-        richMessageButton('~', { callback_data: stageCallback(poll.id, row.index, 'maybe') }),
-        richMessageButton('\u2717', { callback_data: stageCallback(poll.id, row.index, 'no') }),
-      ]);
+      const label = `${row.start}\u2013${row.end}`;
+      const counts = `\u2713${row.counts.yes}  ~${row.counts.maybe}  \u2717${row.counts.no}`;
+      const result = new RichTextBuilder().bold(label).plain(`  ${counts}`);
+
+      if (staged) {
+        const choice = choiceFor(staged, row);
+        builder.paragraph(result);
+        builder.buttons([
+          richMessageButton('\u2713', {
+            callback_data: stageCallback(poll.id, row.index, 'yes'),
+            ...(choice === 'yes' ? { style: 'primary' } : {}),
+          }),
+          richMessageButton('~', {
+            callback_data: stageCallback(poll.id, row.index, 'maybe'),
+            ...(choice === 'maybe' ? { style: 'primary' } : {}),
+          }),
+          richMessageButton('\u2717', {
+            callback_data: stageCallback(poll.id, row.index, 'no'),
+            ...(choice === 'no' ? { style: 'primary' } : {}),
+          }),
+        ]);
+      } else {
+        builder.paragraph(result);
+        builder.buttons([
+          richMessageButton('\u2713', { callback_data: stageCallback(poll.id, row.index, 'yes') }),
+          richMessageButton('~', { callback_data: stageCallback(poll.id, row.index, 'maybe') }),
+          richMessageButton('\u2717', { callback_data: stageCallback(poll.id, row.index, 'no') }),
+        ]);
+      }
     }
   }
 
-  if (staged) {
-    // awaiting the viewer's vote: Confirm / Cancel are always visible, but stay
-    // disabled until at least one response has been staged for an option.
-    const noAnswers = staged.size === 0;
+  if (open && !view.voted) {
+    // the viewer can still stage a vote: Confirm / Cancel are always visible,
+    // but disabled until at least one response has been staged for an option.
+    const noAnswers = !staged || staged.size === 0;
     builder.buttons([
       richMessageButton(`${t('confirm')} \u2713`, {
         ...(noAnswers ? { disabled: {} } : { callback_data: voteConfirmCallback(poll.id) }),
