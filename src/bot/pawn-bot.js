@@ -2,6 +2,7 @@ import { Bot } from 'node-telegram-bot-api';
 
 import { InboxRepository, OutboxRepository } from '../domains/message/message.pipeline.js';
 import { describeApiError, isRetryableApiError } from './api-error.js';
+import { logger } from './logger.js';
 
 /**
  * Bot subclass adding the message-pipeline durability guarantees around the
@@ -84,19 +85,39 @@ export class PawnBot extends Bot {
   async flushOutbox(limit = 100) {
     const pending = OutboxRepository.listPending(limit);
     for (const message of pending) {
+      const started = Date.now();
       try {
         if (
           message.fingerprint != null &&
           OutboxRepository.findSentByFingerprint(message.fingerprint)
         ) {
           OutboxRepository.markSent(message.id);
+          logger.info('telegram api (outbox replay, deduped)', {
+            method: message.method,
+            outboxId: message.id,
+            ms: Date.now() - started,
+          });
           continue;
         }
         await this.#rawApiRequest(message.method, message.payload);
         OutboxRepository.markSent(message.id);
+        logger.info('telegram api (outbox replay)', {
+          method: message.method,
+          outboxId: message.id,
+          ms: Date.now() - started,
+        });
       } catch (err) {
         OutboxRepository.markFailed(message.id, describeApiError(err), {
           giveUp: !isRetryableApiError(err),
+        });
+        logger.error('telegram api (outbox replay) error', {
+          method: message.method,
+          outboxId: message.id,
+          ms: Date.now() - started,
+          code: err?.code,
+          errorCode: err?.errorCode,
+          description: err?.description,
+          message: err?.message,
         });
       }
     }
