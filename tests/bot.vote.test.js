@@ -193,9 +193,9 @@ describe('poll voting via the bot', () => {
 
     await bot.handleUpdate(callbackUpdate(999, `vok:${pollId}`, 111));
 
-    // both slots of the row were voted, and the buttons disappear for the voter
+    // the merged interval is a single option: one vote applied after confirm
     const after = VoteService.getParticipantVotes(pollId, '999');
-    expect(after && Object.values(after)).toEqual(['yes', 'yes']);
+    expect(after && Object.values(after)).toEqual(['yes']);
     expect(messageTexts(log, 'editMessageText')).toContain('\u27131');
     expect(stageButtonCount(log, 'editMessageText')).toBe(0);
   });
@@ -211,7 +211,7 @@ describe('poll voting via the bot', () => {
     await bot.handleUpdate(callbackUpdate(666, `vok:${pollId}`, 111));
 
     const after = VoteService.getParticipantVotes(pollId, '666');
-    expect(after && Object.values(after)).toEqual(['maybe', 'maybe']);
+    expect(after && Object.values(after)).toEqual(['maybe']);
     expect(messageTexts(log, 'editMessageText')).toContain('~1');
     expect(stageButtonCount(log, 'editMessageText')).toBe(0);
   });
@@ -227,7 +227,7 @@ describe('poll voting via the bot', () => {
     await bot.handleUpdate(callbackUpdate(777, `vok:${pollId}`, 111));
 
     const after = VoteService.getParticipantVotes(pollId, '777');
-    expect(after && Object.values(after)).toEqual(['no', 'no']);
+    expect(after && Object.values(after)).toEqual(['no']);
     expect(messageTexts(log, 'editMessageText')).toContain('\u27171');
     expect(stageButtonCount(log, 'editMessageText')).toBe(0);
   });

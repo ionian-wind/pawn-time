@@ -64,7 +64,7 @@ describe('UI localization', () => {
 
     const arrows = richButtons(en).filter((b) => ['\u25C0', '\u25B6'].includes(b.text));
     expect(arrows.map((b) => b.callback_data)).toEqual(
-      expect.arrayContaining(['month:-1', 'month:+1'])
+      expect.arrayContaining(['month:-1', 'month:+1']),
     );
   });
 
@@ -75,7 +75,7 @@ describe('UI localization', () => {
     const past = buildDaysMessage(draft, { year: 2020, monthIndex: 0 }, 'en');
     // 'day:' callbacks are absent: every in-month day is a disabled button
     expect(
-      richButtons(past).filter((b) => String(b.callback_data).startsWith('day:'))
+      richButtons(past).filter((b) => String(b.callback_data).startsWith('day:')),
     ).toHaveLength(0);
 
     const future = buildDaysMessage(draft, { year: 2099, monthIndex: 0 }, 'en');
@@ -97,12 +97,41 @@ describe('UI localization', () => {
     const ru = buildTimesMessage(current, 0, generateTimeSlots(), 'ru');
     expect(richTexts(ru).join(' ')).toContain('слоты');
     expect(
-      richButtons(ru).some((b) => b.text.includes('Назад') && b.callback_data === 'back:')
+      richButtons(ru).some((b) => b.text.includes('Назад') && b.callback_data === 'back:'),
     ).toBe(true);
 
     const en = buildTimesMessage(current, 0, generateTimeSlots(), 'en');
     const labels = richButtons(en).map((b) => b.text);
     expect(labels).toEqual(expect.arrayContaining(['OK \u2713', 'Reset']));
+  });
+
+  it('labels time buttons as intervals and shows merged selections', () => {
+    const author = UserRepository.create({ name: 'A' });
+    const draft = draftWith(author);
+    DraftService.addDate(draft.id, author.id, '2026-09-01');
+    const current = DraftService.getDraft(draft.id, author.id);
+
+    const en = buildTimesMessage(current, 0, generateTimeSlots(), 'en');
+    const slotLabels = richButtons(en)
+      .map((b) => b.text)
+      .filter((text) => /^\d{2}:\d{2}–\d{2}:\d{2}$/.test(text));
+    expect(slotLabels).toContain('09:00\u201309:30');
+
+    DraftService.toggleTimeSlot(draft.id, author.id, {
+      date: '2026-09-01',
+      start: '09:00',
+      end: '09:30',
+    });
+    DraftService.toggleTimeSlot(draft.id, author.id, {
+      date: '2026-09-01',
+      start: '09:30',
+      end: '10:00',
+    });
+    const chosen = DraftService.getDraft(draft.id, author.id);
+    const after = buildTimesMessage(chosen, 0, generateTimeSlots(), 'en');
+    // adjacent picks merge into one continuous interval in the selected summary
+    expect(richTexts(after).join(' ')).toContain('09:00\u201310:00');
+    expect(richTexts(after).join(' ')).not.toContain('09:00, 09:30');
   });
 
   it('builds the poll as date sections with grouped slots and vote/reject buttons', () => {
@@ -140,7 +169,7 @@ describe('UI localization', () => {
     expect(richTexts(en).join(' ')).toContain('14:00\u201314:30');
     // per-row vote, maybe and reject buttons, no global Vote button
     const stageButtons = richButtons(en).filter((b) =>
-      String(b.callback_data).startsWith('stage:')
+      String(b.callback_data).startsWith('stage:'),
     );
     expect(stageButtons.length).toBe(6);
     expect(stageButtons.filter((b) => String(b.callback_data).endsWith(':m'))).toHaveLength(2);
@@ -188,7 +217,7 @@ describe('UI localization', () => {
     const after = buildPollMessage(buildPollView(poll, String(author.id)), 'en');
     expect(richTexts(after).join(' ')).toContain('\u27131');
     expect(richButtons(after).some((b) => String(b.callback_data).startsWith('stage:'))).toBe(
-      false
+      false,
     );
   });
 });

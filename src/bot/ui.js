@@ -3,6 +3,7 @@ import { formatDisplayDate } from './slots.js';
 import { calendarGrid } from './calendar.js';
 import { getTranslator } from './i18n.js';
 import { config } from '../config/index.js';
+import { expandSlots, mergeSlots, countUnits, formatSlot } from '../domains/draft/draft-slot.js';
 import {
   dayCallback,
   slotCallback,
@@ -37,7 +38,7 @@ import { VoteService } from '../domains/vote/vote.service.js';
 function startOfTodayIso() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate()
+    d.getDate(),
   ).padStart(2, '0')}`;
 }
 
@@ -86,7 +87,7 @@ export function buildDaysMessage(draft, calendar, locale = 'en', maxDays = confi
           ...(active ? { style: 'primary' } : {}),
           ...options,
         });
-      })
+      }),
     );
   }
 
@@ -105,7 +106,7 @@ export function buildDaysMessage(draft, calendar, locale = 'en', maxDays = confi
       ? t('none')
       : [...selected].map((d) => formatDisplayDate(d, locale)).join(', ');
   builder.paragraph(
-    `${t('pickDays')}\n${t('selectedInMax', { n: selected.size, max: maxDays })} ${selectedLabel}`
+    `${t('pickDays')}\n${t('selectedInMax', { n: selected.size, max: maxDays })} ${selectedLabel}`,
   );
 
   return { rich_message: builder.build() };
@@ -167,7 +168,7 @@ export function buildTimesMessage(
   dayIndex,
   timeSlots,
   locale = 'en',
-  maxPerDay = config.maxSlotsPerDay
+  maxPerDay = config.maxSlotsPerDay,
 ) {
   const t = getTranslator(locale);
   const dates = draft.selectedDates;
@@ -177,14 +178,15 @@ export function buildTimesMessage(
     return { rich_message: builder.build() };
   }
 
-  const chosen = new Set(
-    draft.timeSlots.filter((slot) => slot.date === date).map((slot) => slot.start)
-  );
-  const atLimit = chosen.size >= maxPerDay;
+  const selectedForDate = draft.timeSlots.filter((slot) => slot.date === date);
+  const chosenUnits = expandSlots(selectedForDate);
+  const selectedIntervals = mergeSlots(selectedForDate);
+  const chosenSize = countUnits(selectedForDate);
+  const atLimit = chosenSize >= maxPerDay;
 
   const builder = new RichMessageBuilder().heading(
     new RichTextBuilder().bold(formatDisplayDate(date, locale)),
-    3
+    3,
   );
   builder.paragraph(t('pickSlots'));
 
@@ -203,32 +205,33 @@ export function buildTimesMessage(
   for (let i = 0; i < timeSlots.length; i += 3) {
     builder.buttons(
       timeSlots.slice(i, i + 3).map((slot) => {
-        const active = chosen.has(slot.start);
+        const active = chosenUnits.some((u) => u.start === slot.start && u.end === slot.end);
         const disabled = atLimit && !active; // no more picks once at this day's slot limit
         const options = disabled
           ? { disabled: {} }
           : { callback_data: slotCallback(date, slot.start) };
-        return richMessageButton(slot.start, {
+        return richMessageButton(formatSlot(slot), {
           ...(active ? { style: 'primary' } : {}),
           ...options,
         });
-      })
+      }),
     );
   }
 
   builder.buttons([
     richMessageButton(`${t('back')} \u2190`, { callback_data: backCallback() }),
     richMessageButton(`${t('ok')} \u2713`, {
-      ...(chosen.size === 0 ? { disabled: {} } : { callback_data: okCallback(STEP.TIMES) }),
+      ...(chosenSize === 0 ? { disabled: {} } : { callback_data: okCallback(STEP.TIMES) }),
     }),
     richMessageButton(t('reset'), {
-      ...(chosen.size === 0 ? { disabled: {} } : { callback_data: resetCallback(STEP.TIMES) }),
+      ...(chosenSize === 0 ? { disabled: {} } : { callback_data: resetCallback(STEP.TIMES) }),
     }),
     richMessageButton(`${t('remove')} \u2715`, { callback_data: removeDraftCallback() }),
   ]);
 
-  const selectedLabel = chosen.size === 0 ? t('none') : [...chosen].sort().join(', ');
-  builder.paragraph(`${t('selectedInMax', { n: chosen.size, max: maxPerDay })} ${selectedLabel}`);
+  const selectedLabel =
+    selectedIntervals.length === 0 ? t('none') : selectedIntervals.map(formatSlot).join(', ');
+  builder.paragraph(`${t('selectedInMax', { n: chosenSize, max: maxPerDay })} ${selectedLabel}`);
 
   return { rich_message: builder.build() };
 }
@@ -358,7 +361,7 @@ export function buildDraftsMessage(drafts, locale = 'en') {
   for (const draft of drafts) {
     const title = draft.title || t('untitled');
     const summary = `${t('daysShort', { n: draft.selectedDates.length })} \u00B7 ${t('slotsShort', {
-      n: draft.timeSlots.length,
+      n: countUnits(draft.timeSlots),
     })}`;
     builder.paragraph(new RichTextBuilder().bold(title).plain(` \u2014 ${summary}`));
 

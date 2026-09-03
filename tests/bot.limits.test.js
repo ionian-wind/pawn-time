@@ -5,6 +5,7 @@ import { generateTimeSlots } from '../src/bot/slots.js';
 import { richButtons, richTexts } from '../src/bot/ui.js';
 import { config } from '../src/config/index.js';
 import { DraftService, UserRepository } from '../src/index.js';
+import { countUnits } from '../src/domains/draft/draft-slot.js';
 
 /**
  *
@@ -124,14 +125,14 @@ describe('scheduling limits', () => {
       start: slots[6].start,
       end: slots[6].end,
     });
-    expect(blocked.timeSlots.filter((s) => s.date === '2026-09-01')).toHaveLength(6);
+    expect(countUnits(blocked.timeSlots.filter((s) => s.date === '2026-09-01'))).toBe(6);
 
     const removed = DraftService.toggleTimeSlot(draft.id, author.id, {
       date: '2026-09-01',
       start: slots[0].start,
       end: slots[0].end,
     });
-    expect(removed.timeSlots.filter((s) => s.date === '2026-09-01')).toHaveLength(5);
+    expect(countUnits(removed.timeSlots.filter((s) => s.date === '2026-09-01'))).toBe(5);
   });
 
   it('disables further day buttons and shows the n/max counter once the limit is reached', () => {
@@ -166,6 +167,7 @@ describe('scheduling limits', () => {
 
     const day = dayButtons(days0)[0];
     const selected = flow.onCallback(String(userId), userId, day.callback_data);
+    const dayDate = decodeCallback(day.callback_data).date;
 
     let times = flow.onCallback(String(userId), userId, okFor(selected.content, 'days')).content;
     const presses = slotButtons(times)
@@ -180,6 +182,6 @@ describe('scheduling limits', () => {
     expect(richTexts(times).join(' ')).toContain('Selected: 6/6');
 
     const reloaded = DraftService.getDraft(session.draftId, session.authorId);
-    expect(reloaded.timeSlots).toHaveLength(6);
+    expect(countUnits(reloaded.timeSlots.filter((s) => s.date === dayDate))).toBe(6);
   });
 });

@@ -7,6 +7,10 @@ import {
   ParticipantRepository,
 } from '../src/index.js';
 
+/**
+ *
+ * @param name
+ */
 function createUser(name = 'Alice') {
   return UserRepository.create({ name, email: `${name.toLowerCase()}@example.com` });
 }
@@ -47,7 +51,7 @@ describe('Draft domain', () => {
     expect(afterReset.selectedDates).toEqual([]);
   });
 
-  it('toggles 30-minute time slots per date', () => {
+  it('toggles 30-minute slots per date, merging adjacent picks into intervals', () => {
     const author = createUser();
     const draft = DraftService.createDraft({ authorUserId: author.id });
     DraftService.addDate(draft.id, author.id, '2026-09-03');
@@ -62,13 +66,23 @@ describe('Draft domain', () => {
     }
 
     const afterAdds = DraftRepository.findById(draft.id);
-    expect(afterAdds.timeSlots).toHaveLength(3);
+    // 10:00 + 10:30 merge into one interval; 09:00 on a different date stays separate
+    expect(afterAdds.timeSlots).toHaveLength(2);
+    expect(afterAdds.timeSlots).toEqual(
+      expect.arrayContaining([
+        { date: '2026-09-03', start: '10:00', end: '11:00' },
+        { date: '2026-09-06', start: '09:00', end: '09:30' },
+      ]),
+    );
 
     DraftService.toggleTimeSlot(draft.id, author.id, daySlots[0]);
     const afterRemove = DraftRepository.findById(draft.id);
-    expect(afterRemove.timeSlots).toHaveLength(2);
-    expect(afterRemove.timeSlots).not.toEqual(
-      expect.arrayContaining([{ date: '2026-09-03', start: '10:00', end: '10:30' }])
+    // removing the first 30-min unit splits the interval back into a tail slot
+    expect(afterRemove.timeSlots).toEqual(
+      expect.arrayContaining([
+        { date: '2026-09-03', start: '10:30', end: '11:00' },
+        { date: '2026-09-06', start: '09:00', end: '09:30' },
+      ]),
     );
   });
 
@@ -108,6 +122,33 @@ describe('Draft domain', () => {
     expect(poll.options.map((o) => o.date).sort()).toEqual(['2026-09-10', '2026-09-11']);
     expect(poll.options.find((o) => o.date === '2026-09-10').startTime).toBe('10:00');
     expect(poll.options.find((o) => o.date === '2026-09-11').startTime).toBe('11:00');
+  });
+
+  it('publishes adjacent slots merged into a single interval option', () => {
+    const author = createUser();
+    const draft = DraftService.createDraft({ authorUserId: author.id, chatId: '123' });
+    DraftService.setTitle(draft.id, author.id, 'Merged');
+    DraftService.addDate(draft.id, author.id, '2026-09-20');
+    const units = [
+      { start: '09:00', end: '09:30' },
+      { start: '09:30', end: '10:00' },
+      { start: '10:00', end: '10:30' },
+    ];
+    for (const { start, end } of units) {
+      DraftService.toggleTimeSlot(draft.id, author.id, {
+        date: '2026-09-20',
+        start,
+        end,
+      });
+    }
+
+    const poll = DraftService.publishDraft(draft.id, author.id);
+    expect(poll.options).toHaveLength(1);
+    expect(poll.options[0]).toMatchObject({
+      date: '2026-09-20',
+      startTime: '09:00',
+      endTime: '10:30',
+    });
   });
 
   it('refuses to publish without a title or slots', () => {

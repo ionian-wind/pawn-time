@@ -1,6 +1,7 @@
 import { DraftRepository } from './draft.repository.js';
 import { PollService } from '../poll/poll.service.js';
 import { config } from '../../config/index.js';
+import { mergeSlots, expandSlots, countUnits } from './draft-slot.js';
 
 /**
  * Business logic for managing scheduling drafts.
@@ -116,9 +117,11 @@ export class DraftService {
   }
 
   /**
-   * Toggles a 30-minute time slot for a date on/off. Adding beyond
-   * `maxPerDay` (defaults to the configured `config.maxSlotsPerDay`) for a
-   * single date is refused: the draft is returned unchanged.
+   * Toggles a 30-minute time slot for a date on/off. Selected slots are stored
+   * as merged intervals: adding a slot coalesces it with any adjacent selected
+   * slot, and removing a slot can split an interval. Adding beyond `maxPerDay`
+   * (defaults to the configured `config.maxSlotsPerDay`) discrete 30-minute
+   * units for a single date is refused: the draft is returned unchanged.
    * @param {string} id
    * @param {string} authorUserId
    * @param {import('./draft.entity.js').DraftTimeSlot} slot
@@ -129,18 +132,18 @@ export class DraftService {
     const draft = this.getDraft(id, authorUserId);
     if (!draft) return null;
 
-    const exists = draft.timeSlots.some(
-      (s) => s.date === slot.date && s.start === slot.start && s.end === slot.end
-    );
-    if (!exists) {
-      const countForDate = draft.timeSlots.filter((s) => s.date === slot.date).length;
-      if (countForDate >= maxPerDay) return draft;
-    }
-    const timeSlots = exists
-      ? draft.timeSlots.filter(
-          (s) => !(s.date === slot.date && s.start === slot.start && s.end === slot.end)
-        )
-      : [...draft.timeSlots, slot];
+    const otherDates = draft.timeSlots.filter((s) => s.date !== slot.date);
+    const units = expandSlots(draft.timeSlots.filter((s) => s.date === slot.date));
+
+    const hasUnit = units.some((u) => u.start === slot.start && u.end === slot.end);
+    if (!hasUnit && countUnits([slot]) + units.length > maxPerDay) return draft;
+
+    const nextUnits = hasUnit
+      ? units.filter((u) => !(u.start === slot.start && u.end === slot.end))
+      : [...units, slot];
+
+    const mergedForDate = mergeSlots(nextUnits);
+    const timeSlots = [...otherDates, ...mergedForDate.map((m) => ({ date: slot.date, ...m }))];
 
     return DraftRepository.update(id, { timeSlots });
   }
@@ -185,7 +188,7 @@ export class DraftService {
         title: draft.title,
         pollType: draft.pollType || 'datetime',
       },
-      options
+      options,
     );
   }
 
