@@ -269,30 +269,35 @@ export function buildPollMessage(view, locale = 'en', staged = null) {
   const isResults = !open || view.voted;
 
   if (isResults) {
-    const rowsByDate = new Map();
+    const cells = [];
+    let lastDate = null;
     for (const row of rows) {
-      if (!rowsByDate.has(row.date)) rowsByDate.set(row.date, []);
-      rowsByDate.get(row.date).push(row);
-    }
-
-    for (const [date, dateRows] of rowsByDate) {
-      builder.paragraph(new RichTextBuilder().bold(formatDisplayDate(date, locale)));
-      builder.table([
-        [
+      if (row.date !== lastDate) {
+        cells.push([
+          richTableCell(new RichTextBuilder().bold(formatDisplayDate(row.date, locale)), {
+            align: 'left',
+          }),
           richTableCell('\u2713', { align: 'center' }),
           richTableCell('~', { align: 'center' }),
           richTableCell('\u2717', { align: 'center' }),
-        ],
-        ...dateRows.map((row) => [
-          richTableCell(new RichTextBuilder().bold(`${row.start}\u2013${row.end}`), {
-            align: 'left',
-          }),
-          richTableCell(String(row.counts.yes), { align: 'center' }),
-          richTableCell(String(row.counts.maybe), { align: 'center' }),
-          richTableCell(String(row.counts.no), { align: 'center' }),
-        ]),
+        ]);
+        lastDate = row.date;
+      }
+      const max = Math.max(row.counts.yes, row.counts.maybe, row.counts.no);
+      const bold = (n) =>
+        n === max && max > 0
+          ? richTableCell(new RichTextBuilder().bold(String(n)), { align: 'center' })
+          : richTableCell(String(n), { align: 'center' });
+      cells.push([
+        richTableCell(new RichTextBuilder().bold(`${row.start}\u2013${row.end}`), {
+          align: 'left',
+        }),
+        bold(row.counts.yes),
+        bold(row.counts.maybe),
+        bold(row.counts.no),
       ]);
     }
+    builder.table(cells);
   } else {
     let lastDate = null;
     for (const row of rows) {

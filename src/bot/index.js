@@ -139,7 +139,19 @@ export function createBot(token, options = {}) {
     }
 
     const decoded = decodeCallback(query.data);
-    if (decoded && (await handlePollCallback(bot, decoded, String(from.id), from.language_code)))
+    const cbChatId = query.message ? String(query.message.chat?.id ?? '') : '';
+    const cbMessageId = query.message?.message_id ?? '';
+    if (
+      decoded &&
+      (await handlePollCallback(
+        bot,
+        decoded,
+        String(from.id),
+        from.language_code,
+        cbChatId,
+        cbMessageId,
+      ))
+    )
       return;
     if (decoded && (await handleDraftsCallback(bot, flow, ctx, decoded))) return;
 
@@ -246,9 +258,11 @@ async function present(bot, flow, result) {
  * @param {import('./callback-data.js').CallbackData} decoded
  * @param {string} sessionId - the voter's telegram user id
  * @param {string} [languageCode]
+ * @param cbChatId
+ * @param cbMessageId
  * @returns {Promise<boolean>}
  */
-async function handlePollCallback(bot, decoded, sessionId, languageCode) {
+async function handlePollCallback(bot, decoded, sessionId, languageCode, cbChatId, cbMessageId) {
   switch (decoded.type) {
     case 'stage':
       await stageVote(
@@ -258,13 +272,15 @@ async function handlePollCallback(bot, decoded, sessionId, languageCode) {
         decoded.response,
         sessionId,
         languageCode,
+        cbChatId,
+        cbMessageId,
       );
       return true;
     case 'vconfirm':
-      await confirmVotes(bot, decoded.pollId, sessionId, languageCode);
+      await confirmVotes(bot, decoded.pollId, sessionId, languageCode, cbChatId, cbMessageId);
       return true;
     case 'vcancel':
-      await cancelStaging(bot, decoded.pollId, sessionId, languageCode);
+      await cancelStaging(bot, decoded.pollId, sessionId, languageCode, cbChatId, cbMessageId);
       return true;
     default:
       return false;
@@ -361,9 +377,20 @@ async function handleDraftsCallback(bot, flow, ctx, decoded) {
  * @param {import('../domains/vote/vote.entity.js').VoteResponse} response
  * @param {string} sessionId
  * @param {string} [languageCode]
+ * @param cbChatId
+ * @param cbMessageId
  * @returns {Promise<void>}
  */
-async function stageVote(bot, pollId, rowIndex, response, sessionId, languageCode) {
+async function stageVote(
+  bot,
+  pollId,
+  rowIndex,
+  response,
+  sessionId,
+  languageCode,
+  cbChatId,
+  cbMessageId,
+) {
   const poll = PollService.getPollWithStats(pollId);
   if (!poll || !VoteService.canVote(poll)) return;
   const row = buildPollView(poll, sessionId).rows[rowIndex];
@@ -376,7 +403,7 @@ async function stageVote(bot, pollId, rowIndex, response, sessionId, languageCod
     else staged.set(optionId, response);
   }
   pendingVotes.set(key, staged);
-  await renderPoll(bot, pollId, sessionId, languageCode, staged);
+  await renderPoll(bot, pollId, sessionId, languageCode, staged, cbChatId, cbMessageId);
 }
 
 /**
@@ -386,9 +413,11 @@ async function stageVote(bot, pollId, rowIndex, response, sessionId, languageCod
  * @param {string} pollId
  * @param {string} sessionId
  * @param {string} [languageCode]
+ * @param cbChatId
+ * @param cbMessageId
  * @returns {Promise<void>}
  */
-async function confirmVotes(bot, pollId, sessionId, languageCode) {
+async function confirmVotes(bot, pollId, sessionId, languageCode, cbChatId, cbMessageId) {
   const poll = PollService.getPollWithStats(pollId);
   if (!poll) return;
   const key = stagedKey(sessionId, pollId);
@@ -401,7 +430,7 @@ async function confirmVotes(bot, pollId, sessionId, languageCode) {
     }
   }
 
-  await renderPoll(bot, pollId, sessionId, languageCode, null);
+  await renderPoll(bot, pollId, sessionId, languageCode, null, cbChatId, cbMessageId);
 }
 
 /**
@@ -411,11 +440,13 @@ async function confirmVotes(bot, pollId, sessionId, languageCode) {
  * @param {string} pollId
  * @param {string} sessionId
  * @param {string} [languageCode]
+ * @param cbChatId
+ * @param cbMessageId
  * @returns {Promise<void>}
  */
-async function cancelStaging(bot, pollId, sessionId, languageCode) {
+async function cancelStaging(bot, pollId, sessionId, languageCode, cbChatId, cbMessageId) {
   pendingVotes.delete(stagedKey(sessionId, pollId));
-  await renderPoll(bot, pollId, sessionId, languageCode, null);
+  await renderPoll(bot, pollId, sessionId, languageCode, null, cbChatId, cbMessageId);
 }
 
 /**
@@ -425,11 +456,16 @@ async function cancelStaging(bot, pollId, sessionId, languageCode) {
  * @param {string} sessionId
  * @param {string | undefined} languageCode
  * @param {Map<string, import('../domains/vote/vote.entity.js').VoteResponse> | null} staged
+ * @param {string} [cbChatId] - actual chat where the button was clicked (for forwarded messages)
+ * @param {number} [cbMessageId] - actual message where the button was clicked
  * @returns {Promise<void>}
  */
-async function renderPoll(bot, pollId, sessionId, languageCode, staged) {
+async function renderPoll(bot, pollId, sessionId, languageCode, staged, cbChatId, cbMessageId) {
   const poll = PollService.getPollWithStats(pollId);
-  const msg = pollMessages.get(pollId);
+  const msg =
+    cbChatId && cbMessageId
+      ? { chatId: cbChatId, messageId: cbMessageId }
+      : pollMessages.get(pollId);
   if (!poll || !msg) return;
   const content = buildPollMessage(
     buildPollView(poll, sessionId),
