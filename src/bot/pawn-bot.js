@@ -85,6 +85,13 @@ export class PawnBot extends Bot {
     const pending = OutboxRepository.listPending(limit);
     for (const message of pending) {
       try {
+        if (
+          message.fingerprint != null &&
+          OutboxRepository.findSentByFingerprint(message.fingerprint)
+        ) {
+          OutboxRepository.markSent(message.id);
+          continue;
+        }
         await this.#rawApiRequest(message.method, message.payload);
         OutboxRepository.markSent(message.id);
       } catch (err) {

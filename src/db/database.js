@@ -151,6 +151,7 @@ function initializeSchema(database) {
       chat_id TEXT NOT NULL,
       method TEXT NOT NULL,
       payload TEXT NOT NULL,
+      fingerprint TEXT,
       status TEXT NOT NULL DEFAULT 'pending'
         CHECK(status IN ('pending', 'sent', 'failed')),
       attempts INTEGER NOT NULL DEFAULT 0,
@@ -236,7 +237,7 @@ function migrateSchema(database) {
       .prepare('SELECT id, session_id FROM users WHERE session_id IS NOT NULL')
       .all();
     const insert = database.prepare(
-      "INSERT OR IGNORE INTO sessions (id, user_id, session_id, created_at) VALUES (?, ?, ?, datetime('now'))"
+      "INSERT OR IGNORE INTO sessions (id, user_id, session_id, created_at) VALUES (?, ?, ?, datetime('now'))",
     );
     for (const row of rows) {
       insert.run(randomUUID(), row.id, row.session_id);
@@ -298,7 +299,20 @@ function migrateSchema(database) {
     `);
   }
 
-  database.exec('PRAGMA user_version = 7;');
+  // v8: add fingerprint column for outbox deduplication.
+  const v8Cols = database
+    .prepare('PRAGMA table_info(outgoing_messages)')
+    .all()
+    .map((c) => c.name);
+  if (!v8Cols.includes('fingerprint')) {
+    database.exec(`
+      ALTER TABLE outgoing_messages ADD COLUMN fingerprint TEXT;
+      CREATE INDEX IF NOT EXISTS idx_outgoing_fingerprint
+        ON outgoing_messages(fingerprint, status);
+    `);
+  }
+
+  database.exec('PRAGMA user_version = 8;');
 }
 
 /**

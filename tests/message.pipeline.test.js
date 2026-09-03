@@ -105,7 +105,7 @@ describe('message pipeline', () => {
       getDatabase()
         .prepare('PRAGMA table_info(outgoing_messages)')
         .all()
-        .map((c) => [c.name, c.type])
+        .map((c) => [c.name, c.type]),
     );
     expect(cols.queued_at).toBe('DATETIME');
     expect(cols.status_changed_at).toBe('DATETIME');
@@ -141,7 +141,7 @@ describe('message pipeline', () => {
     });
 
     await expect(bot.api.sendMessage({ chat_id: 111, text: 'hi' })).rejects.toThrow(
-      'Network request failed'
+      'Network request failed',
     );
 
     let rows = outgoingRows();
@@ -221,5 +221,34 @@ describe('message pipeline', () => {
       { text: 'second', status: 'sent' },
     ]);
     expect(log.map((r) => r.method)).toEqual(['sendMessage', 'sendMessage']);
+  });
+
+  it('skips a pending row whose content was already delivered (dedupes retries)', async () => {
+    const log = [];
+    const bot = createBot('123:fake', { fetch: makeFetch(log), maxRetries: 0 });
+
+    OutboxRepository.record('111', 'sendMessage', { chat_id: 111, text: 'hi' });
+    await bot.flushOutbox();
+    expect(outgoingRows()[0]).toMatchObject({ status: 'sent' });
+
+    const apiCallsAfterFirst = log.filter((r) => r.method === 'sendMessage').length;
+
+    OutboxRepository.record('111', 'sendMessage', { chat_id: 111, text: 'hi' });
+    const count = await bot.flushOutbox();
+
+    const rows = outgoingRows();
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ status: 'sent' });
+
+    expect(log.filter((r) => r.method === 'sendMessage')).toHaveLength(apiCallsAfterFirst);
+    expect(count).toBe(1);
+  });
+
+  it('computes a stable fingerprint regardless of payload key order', () => {
+    const a = OutboxRepository.computeFingerprint('sendMessage', { chat_id: 111, text: 'hi' });
+    const b = OutboxRepository.computeFingerprint('sendMessage', { text: 'hi', chat_id: 111 });
+    const c = OutboxRepository.computeFingerprint('sendMessage', { chat_id: 111, text: 'bye' });
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
   });
 });

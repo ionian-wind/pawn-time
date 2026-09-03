@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { BaseRepository } from '../../db/base-repository.js';
 import { getDatabase } from '../../db/database.js';
 
@@ -25,7 +27,22 @@ export class OutboxRepository extends BaseRepository {
     { field: 'chatId', column: 'chat_id' },
     { field: 'method', column: 'method' },
     { field: 'payload', column: 'payload' },
+    { field: 'fingerprint', column: 'fingerprint' },
   ];
+
+  /**
+   * Computes a stable fingerprint for an outgoing API call from the method and
+   * a canonical serialization of its payload. Two identical logical calls
+   * produce the same fingerprint, which is used to detect (and skip) retries
+   * of a message that was already delivered.
+   * @param {string} method
+   * @param {object} payload
+   * @returns {string}
+   */
+  static computeFingerprint(method, payload) {
+    const canonical = canonicalize(payload);
+    return createHash('sha256').update(`${method}\n${canonical}`).digest('hex');
+  }
 
   /**
    * Queues an outbound API call in the outbox.
@@ -35,7 +52,30 @@ export class OutboxRepository extends BaseRepository {
    * @returns {import('./message.entity.js').OutgoingMessage}
    */
   static record(chatId, method, payload) {
-    return this.create({ chatId, method, payload: JSON.stringify(payload) });
+    const fingerprint = this.computeFingerprint(method, payload);
+    return this.create({ chatId, method, payload: JSON.stringify(payload), fingerprint });
+  }
+
+  /**
+   * Returns a successfully sent row whose fingerprint matches `fingerprint`,
+   * or null if none. Used to tell whether a pending retry was already
+   * delivered to Telegram (e.g. the original response was lost on a laggy
+   * connection) so it can be skipped instead of double-sent.
+   * @param {string} fingerprint
+   * @returns {import('./message.entity.js').OutgoingMessage | null}
+   */
+  static findSentByFingerprint(fingerprint) {
+    if (fingerprint == null) return null;
+    const db = getDatabase();
+    const row = db
+      .prepare(
+        `SELECT * FROM ${this.TABLE}
+         WHERE fingerprint = ? AND status = 'sent'
+         ORDER BY rowid ASC
+         LIMIT 1`,
+      )
+      .get(fingerprint);
+    return row ? this.mapRowToEntity(row) : null;
   }
 
   /**
@@ -50,7 +90,7 @@ export class OutboxRepository extends BaseRepository {
         `SELECT * FROM ${this.TABLE}
          WHERE status = 'pending'
          ORDER BY rowid ASC
-         LIMIT ?`
+         LIMIT ?`,
       )
       .all(limit);
     return rows.map((row) => this.mapRowToEntity(row));
@@ -69,7 +109,7 @@ export class OutboxRepository extends BaseRepository {
         `UPDATE ${this.TABLE}
          SET status = 'sent', attempts = attempts + 1,
              error = NULL, sent_at = ?, handled_at = ?, ${this.UPDATED_AT_COLUMN} = ?
-         WHERE id = ?`
+         WHERE id = ?`,
       )
       .run(now, now, now, id);
     return result.changes > 0;
@@ -92,7 +132,7 @@ export class OutboxRepository extends BaseRepository {
       `UPDATE ${this.TABLE}
        SET status = ?, attempts = attempts + 1, error = ?,
            sent_at = NULL, handled_at = ?, ${this.UPDATED_AT_COLUMN} = ?
-       WHERE id = ?`
+       WHERE id = ?`,
     ).run(status, error, handledAt, new Date().toISOString(), id);
     return this.findById(id);
   }
@@ -104,6 +144,7 @@ export class OutboxRepository extends BaseRepository {
       chatId: row.chat_id,
       method: row.method,
       payload: JSON.parse(row.payload),
+      fingerprint: row.fingerprint ?? null,
       status: row.status,
       attempts: row.attempts,
       error: row.error,
@@ -113,4 +154,24 @@ export class OutboxRepository extends BaseRepository {
       statusChangedAt: row.status_changed_at,
     };
   }
+}
+
+/**
+ * Serializes a payload into a stable, order-independent string so that two
+ * calls with the same logical content (but possibly different key order)
+ * hash identically. Nested objects and arrays are handled recursively.
+ * @param {*} value
+ * @returns {string}
+ */
+function canonicalize(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalize(item)).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
 }

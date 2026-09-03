@@ -26,6 +26,8 @@
  * @property {string} chatId
  * @property {string} method - the Telegram API method, e.g. "sendMessage"
  * @property {object} payload - the API call parameters
+ * @property {string | null} fingerprint - hash of method + canonical payload,
+ *   used to deduplicate retries so a message is never delivered twice
  * @property {OutgoingMessageStatus} status
  * @property {number} attempts
  * @property {string | null} error
