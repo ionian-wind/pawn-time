@@ -1,6 +1,6 @@
 {{{title}}}
 <h3>{{monthTitle}}</h3>
-<table>
+<table bordered compact>
   <tr>
     <td button="{{prevMonth}}">◀</td>
     <td button="{{nextMonth}}">▶</td>
@@ -28,8 +28,8 @@
 </table>
 <table>
   <tr>
-    {{#if canOk}}<td button="{{okCb}}">{{ok}} ✓</td>{{else}}<td>{{ok}} ✓</td>{{/if}}
-    {{#if canOk}}<td button="{{resetCb}}">{{reset}}</td>{{else}}<td>{{reset}}</td>{{/if}}
+    {{#if canOk}}<td button="{{okCb}}">{{ok}} ✓</td>{{else}}<td button="">{{ok}} ✓</td>{{/if}}
+    {{#if canOk}}<td button="{{resetCb}}">{{reset}}</td>{{else}}<td button="">{{reset}}</td>{{/if}}
     <td button="{{removeCb}}">{{remove}} ✕</td>
   </tr>
 </table>

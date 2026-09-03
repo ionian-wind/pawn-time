@@ -248,8 +248,8 @@ describe('poll voting via the bot', () => {
     await bot.handleUpdate(callbackUpdate(555, `stage:${pollId}:0:y`, 111));
     await bot.handleUpdate(callbackUpdate(555, `stage:${pollId}:0:y`, 111));
 
-    // staged set is now empty: confirm/cancel stay visible but disabled (no
-    // `button` attribute, so they are plain text, not interactive cells)
+    // staged set is now empty: confirm/cancel stay visible but disabled
+    // (present as buttons with no callback_data)
     const panel = [...log].reverse().find((r) => r.method === 'editMessageText');
     const text = panel ? richTexts(panel.body).join(' ') : '';
     expect(text).toContain('Confirm \u2713');

@@ -58,8 +58,9 @@ describe('UI localization', () => {
     const ru = buildDaysMessage(draft, calendar, 'ru');
     expect(richTexts(ru).join(' ')).toContain('Выбрано:');
     expect(richTexts(ru).join(' ')).toContain('пн');
-    // nothing selected yet: OK/Reset are rendered as plain text, not buttons
-    expect(richTexts(ru).join(' ')).toContain('ОК');
+    // nothing selected yet: OK/Reset are disabled buttons (button attr, no callback)
+    expect(richButtons(ru).some((b) => b.text === 'ОК ✓' && b.callback_data === '')).toBe(true);
+    expect(richButtons(ru).some((b) => b.text === 'Сброс' && b.callback_data === '')).toBe(true);
     expect(richButtons(ru).some((b) => /^(ok|reset):/.test(b.callback_data))).toBe(false);
 
     const arrows = richButtons(en).filter((b) => ['\u25C0', '\u25B6'].includes(b.text));
@@ -101,9 +102,9 @@ describe('UI localization', () => {
     ).toBe(true);
 
     const en = buildTimesMessage(current, 0, generateTimeSlots(), 'en');
-    // nothing selected yet: OK/Reset are plain text, not buttons
-    expect(richTexts(en).join(' ')).toContain('OK \u2713');
-    expect(richTexts(en).join(' ')).toContain('Reset');
+    // nothing selected yet: OK/Reset are disabled buttons (button attr, no callback)
+    expect(richButtons(en).some((b) => b.text === 'OK ✓' && b.callback_data === '')).toBe(true);
+    expect(richButtons(en).some((b) => b.text === 'Reset' && b.callback_data === '')).toBe(true);
     expect(richButtons(en).some((b) => /^(ok|reset):/.test(b.callback_data))).toBe(false);
   });
 
@@ -178,7 +179,7 @@ describe('UI localization', () => {
     expect(richButtons(en).some((b) => String(b.callback_data).startsWith('vstart:'))).toBe(false);
 
     // initial view (nothing staged yet): Confirm/Cancel are visible but disabled
-    // (rendered as plain text cells, not interactive buttons)
+    // (present as buttons with no callback_data)
     expect(richTexts(en).join(' ')).toContain('Confirm \u2713');
     expect(richTexts(en).join(' ')).toContain('Cancel \u2717');
     expect(richButtons(en).some((b) => /^(vok|vcancel):/.test(b.callback_data))).toBe(false);

@@ -2,12 +2,12 @@
 {{pickSlots}}
 <table>
   <tr>
-    {{#if prevDisabled}}<td>─</td>{{else}}<td button="{{prevCb}}">◀</td>{{/if}}
+    {{#if prevDisabled}}<td button="">─</td>{{else}}<td button="{{prevCb}}">◀</td>{{/if}}
     <td button="{{noopCb}}">{{dayCount}}</td>
-    {{#if nextDisabled}}<td>─</td>{{else}}<td button="{{nextCb}}">▶</td>{{/if}}
+    {{#if nextDisabled}}<td button="">─</td>{{else}}<td button="{{nextCb}}">▶</td>{{/if}}
   </tr>
 </table>
-<table>
+<table bordered compact striped>
   {{#each slotRows}}
   <tr>
     {{#each this}}
@@ -23,8 +23,8 @@
 <table>
   <tr>
     <td button="{{backCb}}">{{back}} ←</td>
-    {{#if canOk}}<td button="{{okCb}}">{{ok}} ✓</td>{{else}}<td>{{ok}} ✓</td>{{/if}}
-    {{#if canOk}}<td button="{{resetCb}}">{{reset}}</td>{{else}}<td>{{reset}}</td>{{/if}}
+    {{#if canOk}}<td button="{{okCb}}">{{ok}} ✓</td>{{else}}<td button="">{{ok}} ✓</td>{{/if}}
+    {{#if canOk}}<td button="{{resetCb}}">{{reset}}</td>{{else}}<td button="">{{reset}}</td>{{/if}}
     <td button="{{removeCb}}">{{remove}} ✕</td>
   </tr>
 </table>

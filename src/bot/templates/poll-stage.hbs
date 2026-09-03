@@ -1,5 +1,5 @@
 <b>{{title}}</b>
-<table>
+<table bordered compact>
   {{#each dateGroups}}
   <tr>
     <td colspan="4"><b>{{date}}</b></td>
@@ -17,8 +17,8 @@
 {{#if canConfirm}}
 <table>
   <tr>
-    {{#if canConfirmVote}}<td button="{{confirmCb}}">{{confirm}}</td>{{else}}<td>{{confirm}}</td>{{/if}}
-    {{#if canConfirmVote}}<td button="{{cancelCb}}">{{cancel}}</td>{{else}}<td>{{cancel}}</td>{{/if}}
+    {{#if canConfirmVote}}<td button="{{confirmCb}}">{{confirm}}</td>{{else}}<td button="">{{confirm}}</td>{{/if}}
+    {{#if canConfirmVote}}<td button="{{cancelCb}}">{{cancel}}</td>{{else}}<td button="">{{cancel}}</td>{{/if}}
   </tr>
 </table>
 {{/if}}
